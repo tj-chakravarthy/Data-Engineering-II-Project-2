@@ -85,13 +85,13 @@ class GitHubClientRateLimitTests(unittest.TestCase):
 
         items = list(
             client.search_repositories(
-                "updated:2026-05-19",
+                "pushed:2026-05-19",
                 on_search_metadata=metadata.append,
             )
         )
 
         self.assertEqual(items, [{"id": 1}])
-        self.assertEqual(metadata[0].query, "updated:2026-05-19")
+        self.assertEqual(metadata[0].query, "pushed:2026-05-19")
         self.assertEqual(metadata[0].total_count, 1200)
         self.assertTrue(metadata[0].incomplete_results)
 

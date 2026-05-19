@@ -45,7 +45,7 @@ Examples:
 
 ```text
 data/cache/repos_created_2026-05-19.ndjson
-data/cache/repos_updated_2026-05-19_stars_10_archived_false.ndjson
+data/cache/repos_pushed_2026-05-19_stars_10_archived_false.ndjson
 ```
 
 Limited test runs using `--limit` or `--limit-per-day` do not write cache files for fetched slices because the slice is intentionally incomplete. Full slices are cached and can be reused by later runs.
@@ -124,7 +124,7 @@ export PYTHONPATH=src
 python3 -m crawler.cli --days 1 --limit 25 --cache-dir data/cache --output data/output/repos.ndjson
 ```
 
-Full last-year crawl using both created-date and updated-date slices:
+Full last-year crawl using both created-date and pushed-date slices:
 
 ```bash
 export PYTHONPATH=src
