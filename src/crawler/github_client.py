@@ -32,6 +32,7 @@ class GitHubClient:
         tokens: list[str] | None = None,
         base_url: str = GITHUB_API,
         max_wait_seconds: int = 60,
+        max_total_wait_seconds: int = 3600,
         timeout_seconds: int = 30,
     ) -> None:
         if tokens is None:
@@ -48,6 +49,7 @@ class GitHubClient:
         self._token_idx = 0
         self.base_url = base_url.rstrip("/")
         self.max_wait_seconds = max_wait_seconds
+        self.max_total_wait_seconds = max_total_wait_seconds
         self.timeout_seconds = timeout_seconds
         self.session = requests.Session()
         self.rate_limit_waits = 0
@@ -58,37 +60,40 @@ class GitHubClient:
         path: str,
         params: dict[str, Any] | None = None,
     ) -> requests.Response:
-        """GET with token rotation and bounded reset waiting on rate limits."""
+        """GET with token rotation and looped reset waiting on rate limits.
+
+        Tries each token in the pool. If all tokens are rate-limited, sleeps
+        until the soonest reset (capped per sleep by ``max_wait_seconds``) and
+        retries the full pool. Continues until a token returns 200 or the total
+        accumulated wait for this call exceeds ``max_total_wait_seconds``.
+        """
         url = path if path.startswith("http") else f"{self.base_url}{path}"
-        attempts = len(self.tokens) + 1
-        slept_once = False
+        total_waited = 0
+        last_rate_limited: requests.Response | None = None
 
-        while attempts > 0:
-            attempts -= 1
-            response = self.session.get(
-                url,
-                headers=self._headers(),
-                params=params,
-                timeout=self.timeout_seconds,
-            )
-            if response.status_code == 200:
-                return response
-
-            if _is_rate_limited(response):
-                if attempts > 0:
+        while True:
+            for _ in range(len(self.tokens)):
+                response = self.session.get(
+                    url,
+                    headers=self._headers(),
+                    params=params,
+                    timeout=self.timeout_seconds,
+                )
+                if response.status_code == 200:
+                    return response
+                if _is_rate_limited(response):
+                    last_rate_limited = response
                     log.info("Rate-limited; rotating GitHub token")
                     self._rotate_token()
                     continue
-                if slept_once:
-                    break
-                self._sleep_until_reset(response)
-                slept_once = True
-                attempts = len(self.tokens)
-                continue
+                response.raise_for_status()
 
-            response.raise_for_status()
-
-        raise RateLimitError(f"Exhausted token rotation and wait window for {url}")
+            if total_waited >= self.max_total_wait_seconds:
+                raise RateLimitError(
+                    f"Exhausted rate-limit wait budget ({total_waited}s) for {url}"
+                )
+            assert last_rate_limited is not None
+            total_waited += self._sleep_until_reset(last_rate_limited)
 
     def paginate(
         self,
@@ -141,7 +146,7 @@ class GitHubClient:
     def _rotate_token(self) -> None:
         self._token_idx += 1
 
-    def _sleep_until_reset(self, response: requests.Response) -> None:
+    def _sleep_until_reset(self, response: requests.Response) -> int:
         reset = int(response.headers.get("X-RateLimit-Reset", "0"))
         wait = max(reset - int(time.time()), 1)
         wait = min(wait, self.max_wait_seconds)
@@ -149,6 +154,7 @@ class GitHubClient:
         self.rate_limit_wait_seconds += wait
         log.warning("All GitHub tokens rate-limited; sleeping %ds", wait)
         time.sleep(wait)
+        return wait
 
 
 def _is_rate_limited(response: requests.Response) -> bool:

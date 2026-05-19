@@ -12,7 +12,7 @@ The crawler is responsible for:
 - partitioning searches by date to work around GitHub's 1000-result search cap;
 - supporting `created`, `updated`, `pushed`, and combined `created-or-updated` date-sliced crawl modes;
 - following pagination;
-- handling rate limits with token pooling, token rotation, and bounded waiting;
+- handling rate limits with token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget;
 - writing and reusing disk-backed cache files;
 - removing duplicate repository records before output;
 - producing normalized NDJSON records for the streaming layer.
@@ -133,5 +133,5 @@ The report should state that:
 - duplicate repositories are removed at the crawler/cache boundary;
 - the `created-or-updated` mode covers repositories created or updated in the last year and deduplicates overlap globally;
 - downstream application logic assumes deduplicated repository records;
-- rate limits are handled through token pooling, token rotation, and bounded waiting;
+- rate limits are handled through token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget;
 - crawler memory is controlled by streaming records, cache-backed processing, and optional memory-limit checks.

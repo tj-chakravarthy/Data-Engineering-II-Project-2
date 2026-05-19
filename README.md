@@ -172,7 +172,7 @@ Crawler report notes to include:
 - The crawler stores results on disk as NDJSON cache files.
 - Cache files are used to resume/reuse GitHub API results and reduce repeated API calls.
 - Duplicate repositories are removed at the crawler/cache boundary using stable GitHub repository IDs.
-- Rate limits are handled through token pooling, token rotation, and bounded waiting.
+- Rate limits are handled through token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget.
 
 ## Testing
 

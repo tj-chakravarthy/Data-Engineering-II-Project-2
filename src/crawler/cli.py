@@ -36,7 +36,10 @@ def main() -> None:
         max_memory_mb=args.max_memory_mb,
     )
 
-    client = GitHubClient(max_wait_seconds=args.max_wait_seconds)
+    client = GitHubClient(
+        max_wait_seconds=args.max_wait_seconds,
+        max_total_wait_seconds=args.max_total_wait_seconds,
+    )
     records, stats = crawl_window(client, config)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -95,7 +98,18 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         help="fail the crawl if tracked Python memory exceeds this limit",
     )
-    parser.add_argument("--max-wait-seconds", type=int, default=60)
+    parser.add_argument(
+        "--max-wait-seconds",
+        type=int,
+        default=60,
+        help="cap on a single rate-limit sleep between token-pool retries",
+    )
+    parser.add_argument(
+        "--max-total-wait-seconds",
+        type=int,
+        default=3600,
+        help="total rate-limit wait budget per GET before raising RateLimitError",
+    )
     return parser.parse_args()
 
 
