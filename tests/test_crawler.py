@@ -87,15 +87,15 @@ class CrawlerTests(unittest.TestCase):
     def test_build_search_query(self) -> None:
         self.assertEqual(build_search_query("created", "2026-05-19"), "created:2026-05-19")
         self.assertEqual(
-            build_search_query("updated", "2026-05-19", "stars:>=10 archived:false"),
-            "updated:2026-05-19 stars:>=10 archived:false",
+            build_search_query("pushed", "2026-05-19", "stars:>=10 archived:false"),
+            "pushed:2026-05-19 stars:>=10 archived:false",
         )
 
     def test_date_field_modes(self) -> None:
         self.assertEqual(date_fields_for_mode("created"), ("created",))
         self.assertEqual(
-            date_fields_for_mode("created-or-updated"),
-            ("created", "updated"),
+            date_fields_for_mode("created-or-pushed"),
+            ("created", "pushed"),
         )
 
     def test_cache_deduplicates_slice(self) -> None:
@@ -145,13 +145,13 @@ class CrawlerTests(unittest.TestCase):
             self.assertEqual(stats.fetched, 1)
             self.assertFalse((cache_dir / "repos_created_2026-05-19.ndjson").exists())
 
-    def test_created_or_updated_mode_runs_both_queries_and_global_dedupes(self) -> None:
+    def test_created_or_pushed_mode_runs_both_queries_and_global_dedupes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             client = FakeClient()
             config = CrawlConfig(
                 end_date=date(2026, 5, 19),
                 days=1,
-                date_field="created-or-updated",
+                date_field="created-or-pushed",
                 cache_dir=Path(tmp),
                 log_every=0,
                 memory_log_every=0,
@@ -162,7 +162,7 @@ class CrawlerTests(unittest.TestCase):
                 client.queries,
                 [
                     "created:2026-05-19T00:00:00Z..2026-05-19T23:59:59Z",
-                    "updated:2026-05-19T00:00:00Z..2026-05-19T23:59:59Z",
+                    "pushed:2026-05-19T00:00:00Z..2026-05-19T23:59:59Z",
                 ],
             )
             self.assertEqual(stats.fetched, 6)

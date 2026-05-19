@@ -53,12 +53,12 @@ Run a larger crawl:
 
 ```bash
 export PYTHONPATH=src
-python3 -m crawler.cli --days 365 --date-field created-or-updated --cache-dir data/cache --output data/output/repos.ndjson
+python3 -m crawler.cli --days 365 --date-field created-or-pushed --cache-dir data/cache --output data/output/repos.ndjson
 ```
 
 Useful options:
 
-- `--date-field created|updated|pushed|created-or-updated`: choose the GitHub date qualifier. `created-or-updated` runs both date-sliced searches and globally deduplicates the output.
+- `--date-field created|pushed|created-or-pushed`: choose the GitHub date qualifier. `created-or-pushed` runs both date-sliced searches and globally deduplicates the output. The PDF's "updated" criterion is implemented as `pushed:` because GitHub's search API does not expose an `updated:` qualifier.
 - `--query "stars:>=10 archived:false"`: add extra GitHub search qualifiers.
 - `--refresh-cache`: refetch slices even if cache files exist.
 - `--no-cache`: stream without writing cache files.

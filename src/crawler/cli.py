@@ -80,9 +80,14 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--end", help="end date as YYYY-MM-DD; default: today UTC")
     parser.add_argument(
         "--date-field",
-        choices=["created", "updated", "pushed", "created-or-updated"],
+        choices=["created", "pushed", "created-or-pushed"],
         default="created",
-        help="GitHub search date qualifier to slice by; created-or-updated runs both and deduplicates",
+        help=(
+            "GitHub search date qualifier to slice by. created-or-pushed runs both "
+            "created and pushed date-sliced searches and globally deduplicates. "
+            "GitHub does not support an updated: search qualifier; pushed: (last "
+            "commit) is used to capture the PDF's 'updated' criterion."
+        ),
     )
     parser.add_argument(
         "--query",

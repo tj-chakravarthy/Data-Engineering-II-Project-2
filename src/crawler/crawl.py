@@ -16,7 +16,7 @@ from crawler.models import RepoRecord
 
 log = logging.getLogger(__name__)
 
-VALID_DATE_FIELDS = {"created", "updated", "pushed", "created-or-updated"}
+VALID_DATE_FIELDS = {"created", "pushed", "created-or-pushed"}
 GITHUB_SEARCH_RESULT_CAP = 1000
 
 
@@ -154,8 +154,8 @@ def build_search_query(
 
 def date_fields_for_mode(date_field: str) -> tuple[str, ...]:
     """Expand the public crawl mode into concrete GitHub date qualifiers."""
-    if date_field == "created-or-updated":
-        return ("created", "updated")
+    if date_field == "created-or-pushed":
+        return ("created", "pushed")
     return (date_field,)
 
 

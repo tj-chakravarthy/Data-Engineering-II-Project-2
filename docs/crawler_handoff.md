@@ -11,7 +11,7 @@ The crawler is responsible for:
 - collecting GitHub repository metadata from the GitHub REST API;
 - partitioning searches by date to work around GitHub's 1000-result search cap;
 - recursively splitting full uncapped runs into smaller UTC time ranges when a day still exceeds the search cap;
-- supporting `created`, `updated`, `pushed`, and combined `created-or-updated` date-sliced crawl modes;
+- supporting `created`, `pushed`, and combined `created-or-pushed` date-sliced crawl modes (GitHub does not expose an `updated:` search qualifier; the PDF's "updated" criterion is implemented as `pushed:`);
 - following pagination;
 - handling rate limits with token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget;
 - warning when GitHub reports a search slice above the 1000-result API cap or marks results incomplete;
@@ -128,14 +128,13 @@ Full last-year crawl using both created-date and updated-date slices:
 
 ```bash
 export PYTHONPATH=src
-python3 -m crawler.cli --days 365 --date-field created-or-updated --cache-dir data/cache --output data/output/repos.ndjson
+python3 -m crawler.cli --days 365 --date-field created-or-pushed --cache-dir data/cache --output data/output/repos.ndjson
 ```
 
 Individual date modes are also supported:
 
 ```bash
 python3 -m crawler.cli --days 365 --date-field created
-python3 -m crawler.cli --days 365 --date-field updated
 python3 -m crawler.cli --days 365 --date-field pushed
 ```
 
@@ -178,7 +177,7 @@ rate_limit_waits=<rate-limit sleep cycles>
 rate_limit_wait_seconds=<total rate-limit sleep time>
 ```
 
-For report-grade data, `search_cap_warnings` and `incomplete_search_warnings` should be zero. `search_splits` and `global_duplicates` can be positive. `global_duplicates` is expected in `created-or-updated` mode because the same repository can appear in both date fields.
+For report-grade data, `search_cap_warnings` and `incomplete_search_warnings` should be zero. `search_splits` and `global_duplicates` can be positive. `global_duplicates` is expected in `created-or-pushed` mode because the same repository can appear in both date fields.
 
 ## Report Notes
 
@@ -187,7 +186,7 @@ The report should state that:
 - GitHub API results are stored on disk as NDJSON cache files;
 - caching supports resumable/repeatable runs and reduces repeated API calls;
 - duplicate repositories are removed at the crawler/cache boundary;
-- the `created-or-updated` mode covers repositories created or updated in the last year and deduplicates overlap globally;
+- the `created-or-pushed` mode covers repositories created or last-pushed in the last year and deduplicates overlap globally; the PDF's "updated" criterion is implemented via GitHub's `pushed:` qualifier because no `updated:` search qualifier exists;
 - downstream application logic assumes deduplicated repository records;
 - full uncapped runs recursively split busy day ranges into smaller UTC time ranges to stay under GitHub's 1000-result search cap;
 - rate limits are handled through token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget;
