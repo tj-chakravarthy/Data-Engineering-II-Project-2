@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any
 
 import requests
@@ -17,6 +18,15 @@ log = logging.getLogger(__name__)
 
 class RateLimitError(RuntimeError):
     """Raised when all tokens are exhausted beyond the configured wait window."""
+
+
+@dataclass(frozen=True)
+class SearchMetadata:
+    """Metadata returned by GitHub's search endpoints before item pagination."""
+
+    query: str
+    total_count: int | None
+    incomplete_results: bool
 
 
 class GitHubClient:
@@ -101,6 +111,15 @@ class GitHubClient:
         params: dict[str, Any] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Yield all items across paginated GitHub responses."""
+        for payload in self.paginate_json(path, params=params):
+            yield from _extract_items(payload)
+
+    def paginate_json(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+    ) -> Iterator[Any]:
+        """Yield decoded JSON payloads across paginated GitHub responses."""
         params = dict(params or {})
         params.setdefault("per_page", 100)
         url: str | None = path if path.startswith("http") else f"{self.base_url}{path}"
@@ -109,7 +128,7 @@ class GitHubClient:
         while url:
             response = self.get(url, params=params if first else None)
             first = False
-            yield from _extract_items(response.json())
+            yield response.json()
             url = _next_link(response.headers.get("Link", ""))
 
     def search_repositories(
@@ -117,6 +136,7 @@ class GitHubClient:
         query: str,
         sort: str | None = "stars",
         order: str | None = "desc",
+        on_search_metadata: Callable[[SearchMetadata], None] | None = None,
     ) -> Iterator[dict[str, Any]]:
         """Yield `/search/repositories` items.
 
@@ -128,7 +148,31 @@ class GitHubClient:
             params["sort"] = sort
         if order:
             params["order"] = order
-        yield from self.paginate("/search/repositories", params=params)
+        first = True
+        for payload in self.paginate_json("/search/repositories", params=params):
+            if first and isinstance(payload, dict):
+                first = False
+                metadata = _search_metadata_from_payload(query, payload)
+                if on_search_metadata:
+                    on_search_metadata(metadata)
+            yield from _extract_items(payload)
+
+    def search_repositories_metadata(
+        self,
+        query: str,
+        sort: str | None = "stars",
+        order: str | None = "desc",
+    ) -> SearchMetadata:
+        """Fetch only search metadata for adaptive query partitioning."""
+        params: dict[str, Any] = {"q": query, "per_page": 1}
+        if sort:
+            params["sort"] = sort
+        if order:
+            params["order"] = order
+        payload = self.get("/search/repositories", params=params).json()
+        if not isinstance(payload, dict):
+            return SearchMetadata(query=query, total_count=None, incomplete_results=False)
+        return _search_metadata_from_payload(query, payload)
 
     def rate_limit_status(self) -> dict[str, Any]:
         return self.get("/rate_limit").json()
@@ -173,9 +217,23 @@ def _extract_items(payload: Any) -> list[dict[str, Any]]:
     return [payload]
 
 
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _search_metadata_from_payload(query: str, payload: dict[str, Any]) -> SearchMetadata:
+    return SearchMetadata(
+        query=query,
+        total_count=_int_or_none(payload.get("total_count")),
+        incomplete_results=bool(payload.get("incomplete_results", False)),
+    )
+
+
 def _next_link(link_header: str) -> str | None:
     for part in link_header.split(","):
         if 'rel="next"' in part:
             return part.split(";")[0].strip().strip("<>")
     return None
-

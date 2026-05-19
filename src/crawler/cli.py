@@ -52,6 +52,7 @@ def main() -> None:
         "stats: emitted=%d fetched=%d cache_written=%d loaded_from_cache=%d "
         "slice_duplicates=%d global_duplicates=%d api_slices=%d cache_slices=%d "
         "memory_samples=%d peak_python_memory_kb=%d "
+        "search_splits=%d search_cap_warnings=%d incomplete_search_warnings=%d "
         "rate_limit_waits=%d rate_limit_wait_seconds=%d",
         stats.emitted,
         stats.fetched,
@@ -63,6 +64,9 @@ def main() -> None:
         stats.slices_from_cache,
         stats.memory_samples,
         stats.peak_python_memory_kb,
+        stats.search_splits,
+        stats.search_cap_warnings,
+        stats.incomplete_search_warnings,
         client.rate_limit_waits,
         client.rate_limit_wait_seconds,
     )

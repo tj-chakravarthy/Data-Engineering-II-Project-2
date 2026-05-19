@@ -13,6 +13,7 @@ from crawler.crawl import (
     date_fields_for_mode,
     date_slices,
 )
+from crawler.github_client import SearchMetadata
 from crawler.models import RepoRecord
 
 
@@ -20,12 +21,60 @@ class FakeClient:
     def __init__(self) -> None:
         self.queries: list[str] = []
 
-    def search_repositories(self, query: str, sort: str, order: str):
+    def search_repositories_metadata(self, query: str, sort: str, order: str):
+        return SearchMetadata(
+            query=query,
+            total_count=3,
+            incomplete_results=False,
+        )
+
+    def search_repositories(self, query: str, sort: str, order: str, on_search_metadata=None):
         self.queries.append(query)
-        day = query.split(":", 1)[1].split(" ", 1)[0]
+        day = query.split(":", 1)[1][:10]
+        if on_search_metadata:
+            on_search_metadata(
+                SearchMetadata(
+                    query=query,
+                    total_count=3,
+                    incomplete_results=False,
+                )
+            )
         yield _github_item(1, "owner/one", day)
         yield _github_item(1, "owner/one", day)
         yield _github_item(2, "owner/two", day)
+
+
+class CappedFakeClient:
+    def search_repositories(self, query: str, sort: str, order: str, on_search_metadata=None):
+        if on_search_metadata:
+            on_search_metadata(
+                SearchMetadata(
+                    query=query,
+                    total_count=1500,
+                    incomplete_results=True,
+                )
+            )
+        yield _github_item(1, "owner/one", query.split(":", 1)[1][:10])
+
+
+class SplittingFakeClient:
+    def __init__(self) -> None:
+        self.queries: list[str] = []
+
+    def search_repositories_metadata(self, query: str, sort: str, order: str):
+        is_full_day = (
+            "T00:00:00Z..2026-05-19T23:59:59Z" in query
+        )
+        return SearchMetadata(
+            query=query,
+            total_count=1500 if is_full_day else 2,
+            incomplete_results=False,
+        )
+
+    def search_repositories(self, query: str, sort: str, order: str, on_search_metadata=None):
+        self.queries.append(query)
+        day = query.split(":", 1)[1][:10]
+        yield _github_item(len(self.queries), f"owner/{len(self.queries)}", day)
 
 
 class CrawlerTests(unittest.TestCase):
@@ -111,10 +160,45 @@ class CrawlerTests(unittest.TestCase):
             self.assertEqual([record.repo_id for record in records], [1, 2])
             self.assertEqual(
                 client.queries,
-                ["created:2026-05-19", "updated:2026-05-19"],
+                [
+                    "created:2026-05-19T00:00:00Z..2026-05-19T23:59:59Z",
+                    "updated:2026-05-19T00:00:00Z..2026-05-19T23:59:59Z",
+                ],
             )
             self.assertEqual(stats.fetched, 6)
             self.assertEqual(stats.duplicate_global, 2)
+
+    def test_warns_when_github_search_slice_exceeds_cap_or_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = CrawlConfig(
+                end_date=date(2026, 5, 19),
+                days=1,
+                cache_dir=Path(tmp),
+                global_limit=1,
+                log_every=0,
+                memory_log_every=0,
+            )
+            records, stats = crawl_window(CappedFakeClient(), config)  # type: ignore[arg-type]
+            self.assertEqual([record.repo_id for record in records], [1])
+            self.assertEqual(stats.search_cap_warnings, 1)
+            self.assertEqual(stats.incomplete_search_warnings, 1)
+
+    def test_complete_crawl_splits_search_ranges_above_github_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            client = SplittingFakeClient()
+            config = CrawlConfig(
+                end_date=date(2026, 5, 19),
+                days=1,
+                cache_dir=Path(tmp),
+                log_every=0,
+                memory_log_every=0,
+            )
+            records, stats = crawl_window(client, config)  # type: ignore[arg-type]
+
+            self.assertEqual([record.repo_id for record in records], [1, 2])
+            self.assertEqual(len(client.queries), 2)
+            self.assertEqual(stats.search_splits, 1)
+            self.assertEqual(stats.search_cap_warnings, 0)
 
 
 def _record(repo_id: int, full_name: str) -> RepoRecord:

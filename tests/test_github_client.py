@@ -69,6 +69,32 @@ class GitHubClientRateLimitTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             client.get("/x")
 
+    def test_search_repositories_exposes_first_page_metadata(self) -> None:
+        client = GitHubClient(tokens=["t1"])
+        ok = _response(
+            200,
+            json_payload={
+                "total_count": 1200,
+                "incomplete_results": True,
+                "items": [{"id": 1}],
+            },
+        )
+        client.session = MagicMock()
+        client.session.get.return_value = ok
+        metadata = []
+
+        items = list(
+            client.search_repositories(
+                "updated:2026-05-19",
+                on_search_metadata=metadata.append,
+            )
+        )
+
+        self.assertEqual(items, [{"id": 1}])
+        self.assertEqual(metadata[0].query, "updated:2026-05-19")
+        self.assertEqual(metadata[0].total_count, 1200)
+        self.assertTrue(metadata[0].incomplete_results)
+
 
 if __name__ == "__main__":
     unittest.main()

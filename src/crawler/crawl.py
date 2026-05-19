@@ -11,12 +11,13 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from crawler.cache import RepoCache
-from crawler.github_client import GitHubClient
+from crawler.github_client import GitHubClient, SearchMetadata
 from crawler.models import RepoRecord
 
 log = logging.getLogger(__name__)
 
 VALID_DATE_FIELDS = {"created", "updated", "pushed", "created-or-updated"}
+GITHUB_SEARCH_RESULT_CAP = 1000
 
 
 class MemoryLimitExceeded(RuntimeError):
@@ -70,6 +71,33 @@ class CrawlStats:
     slices_from_cache: int = 0
     memory_samples: int = 0
     peak_python_memory_kb: int = 0
+    search_splits: int = 0
+    search_cap_warnings: int = 0
+    incomplete_search_warnings: int = 0
+
+
+@dataclass(frozen=True)
+class SearchRange:
+    """Inclusive UTC time range used to keep GitHub search queries below the cap."""
+
+    start: datetime
+    end: datetime
+
+    def expression(self) -> str:
+        return f"{_github_datetime(self.start)}..{_github_datetime(self.end)}"
+
+    def can_split(self) -> bool:
+        return self.start < self.end
+
+    def split(self) -> tuple["SearchRange", "SearchRange"]:
+        midpoint = self.start + (self.end - self.start) / 2
+        midpoint = midpoint.replace(microsecond=0)
+        if midpoint >= self.end:
+            midpoint = self.start
+        return (
+            SearchRange(self.start, midpoint),
+            SearchRange(midpoint + timedelta(seconds=1), self.end),
+        )
 
 
 def crawl_window(
@@ -115,8 +143,12 @@ def date_slices(end_date: date, days: int) -> Iterator[str]:
         yield (end_date - timedelta(days=offset)).strftime("%Y-%m-%d")
 
 
-def build_search_query(date_field: str, day: str, query_suffix: str = "") -> str:
-    base = f"{date_field}:{day}"
+def build_search_query(
+    date_field: str,
+    date_expression: str,
+    query_suffix: str = "",
+) -> str:
+    base = f"{date_field}:{date_expression}"
     return f"{base} {query_suffix.strip()}" if query_suffix.strip() else base
 
 
@@ -178,10 +210,9 @@ def _records_for_slice(
         return
 
     stats.slices_from_api += 1
-    query = build_search_query(date_field, day, config.query_suffix)
     records = _fetch_day_records(
         client,
-        query,
+        date_field,
         day,
         config,
         stats,
@@ -217,7 +248,7 @@ def _records_for_slice(
 
 def _fetch_day_records(
     client: GitHubClient,
-    query: str,
+    date_field: str,
     day: str,
     config: CrawlConfig,
     stats: CrawlStats,
@@ -225,13 +256,32 @@ def _fetch_day_records(
 ) -> Iterator[RepoRecord]:
     count = 0
     effective_limit = _effective_fetch_limit(config.limit_per_day, max_records)
-    for item in client.search_repositories(query, sort=config.sort, order=config.order):
-        record = RepoRecord.from_github_item(item, crawl_day=day)
-        stats.fetched += 1
-        yield record
-        count += 1
-        if effective_limit is not None and count >= effective_limit:
-            return
+    if effective_limit is None:
+        queries = _complete_slice_queries(client, date_field, day, config, stats)
+        on_search_metadata = None
+    else:
+        queries = [
+            build_search_query(
+                date_field,
+                _full_day_range(day).expression(),
+                config.query_suffix,
+            )
+        ]
+        on_search_metadata = lambda metadata: _record_search_metadata(metadata, stats)
+
+    for query in queries:
+        for item in client.search_repositories(
+            query,
+            sort=config.sort,
+            order=config.order,
+            on_search_metadata=on_search_metadata,
+        ):
+            record = RepoRecord.from_github_item(item, crawl_day=day)
+            stats.fetched += 1
+            yield record
+            count += 1
+            if effective_limit is not None and count >= effective_limit:
+                return
 
 
 def _effective_fetch_limit(
@@ -240,6 +290,90 @@ def _effective_fetch_limit(
 ) -> int | None:
     limits = [limit for limit in (limit_per_day, max_records) if limit is not None]
     return min(limits) if limits else None
+
+
+def _complete_slice_queries(
+    client: GitHubClient,
+    date_field: str,
+    day: str,
+    config: CrawlConfig,
+    stats: CrawlStats,
+) -> Iterator[str]:
+    return _split_range_queries(
+        client,
+        date_field,
+        _full_day_range(day),
+        config,
+        stats,
+    )
+
+
+def _split_range_queries(
+    client: GitHubClient,
+    date_field: str,
+    search_range: SearchRange,
+    config: CrawlConfig,
+    stats: CrawlStats,
+) -> Iterator[str]:
+    query = build_search_query(date_field, search_range.expression(), config.query_suffix)
+    metadata = client.search_repositories_metadata(
+        query,
+        sort=config.sort,
+        order=config.order,
+    )
+
+    if metadata.incomplete_results:
+        _record_search_metadata(metadata, stats)
+    if metadata.total_count is None or metadata.total_count <= GITHUB_SEARCH_RESULT_CAP:
+        yield query
+        return
+
+    if not search_range.can_split():
+        _record_search_metadata(metadata, stats)
+        yield query
+        return
+
+    stats.search_splits += 1
+    log.info(
+        "splitting GitHub search query with total_count=%d: %s",
+        metadata.total_count,
+        query,
+    )
+    left, right = search_range.split()
+    yield from _split_range_queries(client, date_field, left, config, stats)
+    yield from _split_range_queries(client, date_field, right, config, stats)
+
+
+def _record_search_metadata(metadata: SearchMetadata, stats: CrawlStats) -> None:
+    """Record GitHub search signals that affect completeness of a slice."""
+    if (
+        metadata.total_count is not None
+        and metadata.total_count > GITHUB_SEARCH_RESULT_CAP
+    ):
+        stats.search_cap_warnings += 1
+        log.warning(
+            "GitHub search cap warning: query=%r reports total_count=%d; "
+            "GitHub exposes only the first 1000 search results for one query. "
+            "Use a narrower query/date partition before treating this slice as complete.",
+            metadata.query,
+            metadata.total_count,
+        )
+    if metadata.incomplete_results:
+        stats.incomplete_search_warnings += 1
+        log.warning(
+            "GitHub marked search results incomplete for query=%r; rerun or narrow the query.",
+            metadata.query,
+        )
+
+
+def _full_day_range(day: str) -> SearchRange:
+    start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    end = start + timedelta(days=1) - timedelta(seconds=1)
+    return SearchRange(start=start, end=end)
+
+
+def _github_datetime(value: datetime) -> str:
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _sample_memory(

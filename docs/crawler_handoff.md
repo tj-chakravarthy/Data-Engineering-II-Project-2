@@ -10,9 +10,11 @@ The crawler is responsible for:
 
 - collecting GitHub repository metadata from the GitHub REST API;
 - partitioning searches by date to work around GitHub's 1000-result search cap;
+- recursively splitting full uncapped runs into smaller UTC time ranges when a day still exceeds the search cap;
 - supporting `created`, `updated`, `pushed`, and combined `created-or-updated` date-sliced crawl modes;
 - following pagination;
 - handling rate limits with token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget;
+- warning when GitHub reports a search slice above the 1000-result API cap or marks results incomplete;
 - writing and reusing disk-backed cache files;
 - removing duplicate repository records before output;
 - producing normalized NDJSON records for the streaming layer.
@@ -73,6 +75,14 @@ Each output line is one JSON object. Current fields:
 
 Downstream producers should publish these records to the raw repository metadata topic without changing the crawler-owned fields.
 
+Recommended producer behavior:
+
+- read the output file line by line so large crawls do not need to fit in memory;
+- publish each JSON object unchanged to the raw metadata topic;
+- use `repo_id` as the message key when the streaming framework supports keyed messages;
+- treat `full_name` as display data, not as the primary key;
+- keep downstream enrichment fields additive instead of rewriting crawler-owned fields.
+
 ## Deduplication Contract
 
 The crawler deduplicates using:
@@ -86,6 +96,22 @@ Deduplication happens:
 - across the final emitted output stream.
 
 This means downstream consumers should treat `repo_id` as the primary key for repository records.
+
+## Completeness Guardrails
+
+GitHub search exposes at most 1000 results for a single search query. The crawler starts with one-day queries. For full uncapped runs, it checks GitHub's reported `total_count` and recursively splits high-volume days into smaller UTC time ranges before fetching records.
+
+When the crawler splits a high-volume range, it increments `search_splits`. When a range cannot be split further and still reports `total_count > 1000`, it logs a warning and increments `search_cap_warnings`. When GitHub marks a search response as incomplete, it increments `incomplete_search_warnings`.
+
+Do not use a crawl as final report data unless both counters are zero in the CLI stats line:
+
+```text
+search_cap_warnings=0 incomplete_search_warnings=0
+```
+
+If either warning counter is non-zero, rerun with a narrower qualifier such as a language/star partition, or agree on the limitation explicitly before producing final graphs. A positive `search_splits` value is acceptable; it means the crawler had to subdivide busy ranges.
+
+Limited smoke runs using `--limit` or `--limit-per-day` do not recursively split because they are intentionally incomplete and are not cached as final data.
 
 ## Running Locally
 
@@ -124,6 +150,36 @@ python3 -m crawler.cli \
   --max-memory-mb 512
 ```
 
+Validate the handoff file before a producer reads it:
+
+```bash
+python3 scripts/validate_crawler_output.py data/output/repos.ndjson
+```
+
+The validator checks JSON parsing, required crawler fields, duplicate repository keys, and prints a short language preview. A non-zero exit means the file should not be streamed into `repos.raw`.
+
+## Expected CLI Stats
+
+The crawler prints one final stats line. The fields most relevant for handoff are:
+
+```text
+emitted=<deduplicated records written>
+fetched=<records fetched from GitHub before dedupe>
+cache_written=<records written to cache>
+loaded_from_cache=<records reused from cache>
+slice_duplicates=<duplicates removed inside one date/query slice>
+global_duplicates=<duplicates removed across final output>
+memory_samples=<number of memory checks>
+peak_python_memory_kb=<tracked Python peak memory>
+search_splits=<high-volume ranges split before fetching>
+search_cap_warnings=<slices that may be capped by GitHub>
+incomplete_search_warnings=<slices GitHub marked incomplete>
+rate_limit_waits=<rate-limit sleep cycles>
+rate_limit_wait_seconds=<total rate-limit sleep time>
+```
+
+For report-grade data, `search_cap_warnings` and `incomplete_search_warnings` should be zero. `search_splits` and `global_duplicates` can be positive. `global_duplicates` is expected in `created-or-updated` mode because the same repository can appear in both date fields.
+
 ## Report Notes
 
 The report should state that:
@@ -133,5 +189,7 @@ The report should state that:
 - duplicate repositories are removed at the crawler/cache boundary;
 - the `created-or-updated` mode covers repositories created or updated in the last year and deduplicates overlap globally;
 - downstream application logic assumes deduplicated repository records;
+- full uncapped runs recursively split busy day ranges into smaller UTC time ranges to stay under GitHub's 1000-result search cap;
 - rate limits are handled through token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget;
-- crawler memory is controlled by streaming records, cache-backed processing, and optional memory-limit checks.
+- crawler memory is controlled by streaming records, cache-backed processing, and optional memory-limit checks;
+- search-cap and incomplete-result counters are used to decide whether a crawl is complete enough for final analytics.

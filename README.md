@@ -72,11 +72,20 @@ Crawler output:
 - Cache files: `data/cache/repos_<date-field>_<YYYY-MM-DD>*.ndjson`
 - Output file: `data/output/repos.ndjson`
 - Records are deduplicated by stable GitHub repository ID before output.
+- CLI logs include `search_splits`, `search_cap_warnings`, and `incomplete_search_warnings`. Warning counters must be zero before treating a crawl as complete for report-grade results.
 
-TODO for crawler owner:
+Validate a crawler handoff file before streaming ingestion:
 
-- Run live GitHub smoke tests with larger windows after the small smoke crawl passes.
-- Coordinate the exact NDJSON-to-streaming handoff with the application/infrastructure owners.
+```bash
+python3 scripts/validate_crawler_output.py data/output/repos.ndjson
+```
+
+Crawler handoff status:
+
+- Implemented: date-sliced GitHub search, adaptive UTC time-range splitting for full uncapped runs, pagination, token-pool rate-limit handling, cache reuse, deduplication, memory sampling/limit checks, normalized NDJSON output, handoff validation, and unit tests.
+- Handoff contract: producers should publish each NDJSON line unchanged to the raw repository metadata topic and treat `repo_id` as the primary key.
+- Completeness guardrail: full uncapped runs split any slice that GitHub reports above 1000 results. If a slice still cannot be split enough, the crawler logs and counts a search-cap warning. Narrow the query before using that data as final.
+- Local smoke artifacts currently exist only under ignored `data/` paths and are not part of the committed submission.
 
 Crawler handoff details are documented in `docs/crawler_handoff.md`.
 
@@ -130,6 +139,14 @@ python3 -m app.producer --input data/output/repos.ndjson
 python3 -m app.run_questions --top-n 10
 ```
 
+Producer input contract:
+
+- Read `data/output/repos.ndjson` line by line.
+- Validate the file first with `scripts/validate_crawler_output.py`.
+- Publish each JSON object unchanged to `repos.raw`.
+- Use `repo_id` as the message key when the streaming framework supports keyed messages.
+- Do not rededuplicate downstream unless a validation failure or manual data edit is detected.
+
 ## Experiments TODO
 
 - TODO: Measure scalability across multiple worker/VM counts, such as 1, 2, and 4 workers where feasible.
@@ -173,6 +190,8 @@ Crawler report notes to include:
 - Cache files are used to resume/reuse GitHub API results and reduce repeated API calls.
 - Duplicate repositories are removed at the crawler/cache boundary using stable GitHub repository IDs.
 - Rate limits are handled through token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget.
+- Full uncapped runs recursively split high-volume day slices into smaller UTC time ranges to avoid GitHub's 1000-result search cap.
+- Completeness warnings are emitted when a final search slice still has more than 1000 results or GitHub marks results incomplete.
 
 ## Testing
 
@@ -181,6 +200,12 @@ Current crawler tests:
 ```bash
 export PYTHONPATH=src
 python3 -m unittest discover -s tests
+```
+
+Validate crawler output:
+
+```bash
+python3 scripts/validate_crawler_output.py data/output/repos.ndjson
 ```
 
 TODO:
