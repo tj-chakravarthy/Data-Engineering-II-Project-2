@@ -1,0 +1,26 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+packages:
+  - python3-pip
+  - python3-dev
+  - build-essential
+
+groups:
+  - docker
+
+system_info:
+  default_user:
+    groups: [docker]
+
+byobu_default: system
+
+# This key is replaced at runtime by start_worker_instances.py with the cluster
+# key generated on the master VM
+ssh_authorized_keys:
+  - __CLUSTER_PUBKEY__
+
+runcmd:
+  - curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
+  - usermod -aG docker ubuntu && newgrp docker

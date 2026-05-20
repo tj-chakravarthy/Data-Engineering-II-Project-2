@@ -1,0 +1,5 @@
+# The login key for the master VM is injected by OpenStack from the key_name
+# passed to start_master_instance.py. Add temporary extra public keys here only
+# for local/private deployments.
+ssh_authorized_keys:
+  - "[your SSH public key here]"
