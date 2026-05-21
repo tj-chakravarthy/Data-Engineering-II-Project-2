@@ -63,6 +63,14 @@ echo "  Unpacked to ${REMOTE_REPO_DIR}"
 # Clean up local archive
 rm -f "$REPO_ARCHIVE"
 
+# --- Copy archive to master ---
+echo "Copying files to master (ubuntu@${MASTER_IP})..."
+scp -i "$PRIVATE_KEY_PATH" \
+    -o StrictHostKeyChecking=accept-new \
+    "$REPO_ARCHIVE"
+    "ubuntu@${MASTER_IP}:/home/ubuntu/"
+echo "  Done."
+
 # --- Run swarm setup ---
 echo "Running 'setup_swarm.sh'...'
 ssh -i "$PRIVATE_KEY_PATH" \
