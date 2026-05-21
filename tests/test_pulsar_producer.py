@@ -1,17 +1,21 @@
 from __future__ import annotations
 
 import json
+import sys
 import tempfile
 import threading
 import time
+import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from crawler.models import RepoRecord
 from streaming.pulsar_producer import (
     PublishCheckpoint,
     _combine_publish_callbacks,
     _make_output_writer,
+    get_pulsar_client,
     publish_records,
     record_to_message,
 )
@@ -119,6 +123,18 @@ class SnapshotFlushRetryProducer:
 
 
 class PulsarProducerTests(unittest.TestCase):
+    def test_get_pulsar_client_imports_pulsar_inside_retry_helper(self) -> None:
+        class FakeClient:
+            def __init__(self, url: str) -> None:
+                self.url = url
+
+        fake_pulsar = types.SimpleNamespace(Client=FakeClient)
+
+        with patch.dict(sys.modules, {"pulsar": fake_pulsar}):
+            client = get_pulsar_client("pulsar://broker:6650", retries=1, delay=0)
+
+        self.assertEqual(client.url, "pulsar://broker:6650")
+
     def test_record_to_message_is_raw_crawler_json_without_newline(self) -> None:
         message = record_to_message(_record(123, "owner/repo"))
 

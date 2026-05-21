@@ -2,11 +2,12 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir \
-    "requests>=2.31" \
-    "pulsar-client>=3.5"
+# fixed by TJ: install from the project requirements so Docker does not drift
+# from local/VM setup when dependencies change.
+COPY requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY crawler/ ./crawler/
-COPY streaming/ ./streaming/
+COPY src/crawler/ ./crawler/
+COPY src/streaming/ ./streaming/
 
 RUN mkdir -p data/cache data/output

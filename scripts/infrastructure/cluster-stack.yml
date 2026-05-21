@@ -27,10 +27,28 @@ services:
       start_period: 60s
 
   crawler:
-    image: andreashadjoullis1153/crawler:latest
-    command: python -m streaming.pulsar_producer --days 1
+    image: "${CRAWLER_IMAGE:-andreashadjoullis1153/crawler:latest}"
+    # fixed by TJ: default stack run is production-shaped; set CRAWL_DAYS=1
+    # in .env when we only want a quick smoke test.
+    command: >
+      python -m streaming.pulsar_producer
+      --days ${CRAWL_DAYS:-365}
+      --date-field ${CRAWL_DATE_FIELD:-created-or-pushed}
+      --cache-dir data/cache
+      --checkpoint-path data/output/repos.published.json
     networks:
       - pulsar-net
+    environment:
+      PULSAR_SERVICE_URL: "${PULSAR_SERVICE_URL:-pulsar://pulsar:6650}"
+      PULSAR_TOPIC: "${PULSAR_TOPIC:-repos.raw}"
+      # fixed by TJ: pass both token naming styles so the committed course env
+      # and local .env files both work with the crawler's token-pool logic.
+      GITHUB_TOKEN: "${GITHUB_TOKEN:-}"
+      GITHUB_TOKEN_1: "${GITHUB_TOKEN_1:-}"
+      GITHUB_TOKEN_2: "${GITHUB_TOKEN_2:-}"
+      GITHUB_TOKEN_3: "${GITHUB_TOKEN_3:-}"
+      GITHUB_TOKEN_4: "${GITHUB_TOKEN_4:-}"
+      GITHUB_TOKEN_5: "${GITHUB_TOKEN_5:-}"
     deploy:
       replicas: 1
       placement:
@@ -38,20 +56,21 @@ services:
       restart_policy:
         condition: on-failure
     volumes:
-      - /home/ubuntu/data:/app/data
-    env_file:
-      - .env
+      # fixed by TJ: Swarm bind mounts should use the VM's absolute repo path.
+      - /home/ubuntu/app/data:/app/data
 
   consumer:
-    image: andreashadjoullis1153/crawler:latest
+    image: "${CRAWLER_IMAGE:-andreashadjoullis1153/crawler:latest}"
     command: python -m streaming.pulsar_toy_consumer
     networks:
       - pulsar-net
+    environment:
+      PULSAR_SERVICE_URL: "${PULSAR_SERVICE_URL:-pulsar://pulsar:6650}"
+      PULSAR_TOPIC: "${PULSAR_TOPIC:-repos.raw}"
+      PULSAR_SUBSCRIPTION: "${PULSAR_SUBSCRIPTION:-debug-consumer}"
     deploy:
       replicas: 1
       placement:
         constraints: [node.role == worker]
       restart_policy:
         condition: on-failure
-    env_file:
-      - .env

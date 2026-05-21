@@ -309,20 +309,9 @@ def record_to_message(record: RepoRecord) -> bytes:
     return record.to_json_line().rstrip("\n").encode("utf-8")
 
 
-def get_pulsar_client(url: str, retries: int = 20, delay: int = 15) -> pulsar.Client:
-    for attempt in range(1, retries + 1):
-        try:
-            client = pulsar.Client(url)
-            print(f"Connected to Pulsar at {url}")
-            return client
-        except Exception as e:
-            print(f"Attempt {attempt}/{retries}: Pulsar not ready ({e}), retrying in {delay}s...")
-            time.sleep(delay)
-    raise RuntimeError(f"Could not connect to Pulsar after {retries} attempts.")
-
-
-def create_pulsar_producer(broker_url: str, topic: str):
-    """Create a Pulsar client and producer."""
+def get_pulsar_client(url: str, retries: int = 20, delay: int = 15):
+    # fixed by TJ: keep the Pulsar import inside the retry helper so the
+    # container can actually connect after waiting for the broker to start.
     try:
         import pulsar
     except ImportError as exc:
@@ -331,6 +320,25 @@ def create_pulsar_producer(broker_url: str, topic: str):
             "`pip install -r requirements.txt`."
         ) from exc
 
+    for attempt in range(1, retries + 1):
+        try:
+            client = pulsar.Client(url)
+            log.info("Connected to Pulsar at %s", url)
+            return client
+        except Exception as e:
+            log.info(
+                "Attempt %d/%d: Pulsar not ready (%s), retrying in %ds...",
+                attempt,
+                retries,
+                e,
+                delay,
+            )
+            time.sleep(delay)
+    raise RuntimeError(f"Could not connect to Pulsar after {retries} attempts.")
+
+
+def create_pulsar_producer(broker_url: str, topic: str):
+    """Create a Pulsar client and producer."""
     client = get_pulsar_client(broker_url)
     return client, client.create_producer(topic)
 

@@ -39,12 +39,26 @@ wait_for_service_replicas() {
             echo "  $service is up ($running)."
             return 0
         fi
-        echo "  Attempt $attempt/60: $running — retrying in 10s..."
+        echo "  Attempt $attempt/60: $running - retrying in 10s..."
         sleep 10
     done
     echo "ERROR: service '$service' did not reach $expected replicas in time."
     docker service logs "$service" --tail 30 || true
     exit 1
+}
+
+build_crawler_image() {
+    local target=$1
+    local image=${CRAWLER_IMAGE:-andreashadjoullis1153/crawler:latest}
+    local command="docker build -f ${REMOTE_REPO_DIR}/src/Dockerfile -t ${image} ${REMOTE_REPO_DIR}"
+
+    if [ "$target" = "local" ]; then
+        echo "Building crawler image on master as ${image}..."
+        $command
+    else
+        echo "Building crawler image on ${target} as ${image}..."
+        ssh "$target" "$command"
+    fi
 }
 
 # -------------------------------------------------------------------
@@ -64,6 +78,10 @@ for worker in $WORKERS; do
         | ssh "$worker" "mkdir -p ${REMOTE_REPO_DIR} && tar -xzf - -C ${REMOTE_REPO_DIR}"
 done
 echo "  Done."
+
+# fixed by TJ: the crawler keeps cache/checkpoint files under /app/data, so
+# create the bind-mount source on the manager before Swarm starts the service.
+mkdir -p "${REMOTE_REPO_DIR}/data/cache" "${REMOTE_REPO_DIR}/data/output"
 
 # -------------------------------------------------------------------
 # 3. Init Docker Swarm on master
@@ -91,7 +109,27 @@ echo "Creating '/home/ubuntu/data' directory..."
 mkdir -p /home/ubuntu/data
 echo "  Done"
 echo "Deploying pulsar stack..."
-docker stack deploy --detach=true -c "$STACK_FILE" pulsar
+if [ ! -f "${REMOTE_REPO_DIR}/.env" ]; then
+    echo "ERROR: missing ${REMOTE_REPO_DIR}/.env"
+    exit 1
+fi
+
+# fixed by TJ: source .env here so docker stack deploy expands crawler and
+# consumer environment values without relying on unsupported env_file behavior.
+set -a
+source "${REMOTE_REPO_DIR}/.env"
+set +a
+
+# fixed by TJ: build the crawler image as part of setup so the professor does
+# not need to remember a separate docker build/push step before deploying.
+build_crawler_image local
+for worker in $WORKERS; do
+    build_crawler_image "$worker"
+done
+
+# fixed by TJ: images are built locally on each VM above, so don't let Swarm
+# resolve this tag against Docker Hub and accidentally run an older push.
+docker stack deploy --resolve-image never --detach=true -c "$STACK_FILE" pulsar
 
 wait_for_service_replicas "pulsar_pulsar" 1
 
