@@ -327,14 +327,23 @@ def _split_range_queries(
         order=config.order,
     )
 
-    if metadata.incomplete_results:
-        _record_search_metadata(metadata, stats)
-    if metadata.total_count is None or metadata.total_count <= GITHUB_SEARCH_RESULT_CAP:
+    # ``incomplete_results`` is a warning regardless of whether we can split.
+    _record_incomplete_warning(metadata, stats)
+
+    within_cap = (
+        metadata.total_count is None
+        or metadata.total_count <= GITHUB_SEARCH_RESULT_CAP
+    )
+    if within_cap:
         yield query
         return
 
     if not search_range.can_split():
-        _record_search_metadata(metadata, stats)
+        # Over the cap and the range cannot be subdivided further: this is a
+        # real cap warning. ``_record_incomplete_warning`` above already
+        # recorded any incomplete-results signal, so we only need the cap
+        # warning here.
+        _record_cap_warning(metadata, stats)
         yield query
         return
 
@@ -350,7 +359,18 @@ def _split_range_queries(
 
 
 def _record_search_metadata(metadata: SearchMetadata, stats: CrawlStats) -> None:
-    """Record GitHub search signals that affect completeness of a slice."""
+    """Record both warnings from a metadata response.
+
+    Used by callers that always want both signals (e.g. the limited / non-
+    splitting path in ``_fetch_day_records``). The splitter calls the
+    individual helpers below so that cap warnings are not double-counted
+    when the splitter both detects and recovers from an over-cap range.
+    """
+    _record_cap_warning(metadata, stats)
+    _record_incomplete_warning(metadata, stats)
+
+
+def _record_cap_warning(metadata: SearchMetadata, stats: CrawlStats) -> None:
     if (
         metadata.total_count is not None
         and metadata.total_count > GITHUB_SEARCH_RESULT_CAP
@@ -363,6 +383,9 @@ def _record_search_metadata(metadata: SearchMetadata, stats: CrawlStats) -> None
             metadata.query,
             metadata.total_count,
         )
+
+
+def _record_incomplete_warning(metadata: SearchMetadata, stats: CrawlStats) -> None:
     if metadata.incomplete_results:
         stats.incomplete_search_warnings += 1
         log.warning(

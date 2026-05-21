@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from crawler.cache import RepoCache
 from crawler.crawl import (
     CrawlConfig,
+    CrawlStats,
+    SearchRange,
+    _split_range_queries,
     build_search_query,
     crawl_window,
     date_fields_for_mode,
@@ -258,6 +261,48 @@ class CrawlerTests(unittest.TestCase):
             self.assertEqual(len(client.queries), 2)
             self.assertEqual(stats.search_splits, 1)
             self.assertEqual(stats.search_cap_warnings, 0)
+
+    def test_splitter_counts_each_warning_once_when_unsplittable(self) -> None:
+        """Regression for double-counted warnings: when a leaf range is both
+        over-cap AND incomplete AND can't split further, both counters must
+        increment exactly once, not twice."""
+
+        class OverCapIncompleteClient:
+            def search_repositories_metadata(
+                self, query: str, sort: str, order: str
+            ) -> SearchMetadata:
+                return SearchMetadata(
+                    query=query,
+                    total_count=1500,
+                    incomplete_results=True,
+                )
+
+        moment = datetime(2026, 5, 19, 12, 0, 0, tzinfo=timezone.utc)
+        unsplittable = SearchRange(start=moment, end=moment)
+        self.assertFalse(unsplittable.can_split())
+
+        config = CrawlConfig(
+            end_date=date(2026, 5, 19),
+            days=1,
+            cache_dir=Path("unused-for-this-test"),
+            log_every=0,
+            memory_log_every=0,
+        )
+        stats = CrawlStats()
+
+        queries = list(
+            _split_range_queries(
+                OverCapIncompleteClient(),  # type: ignore[arg-type]
+                "created",
+                unsplittable,
+                config,
+                stats,
+            )
+        )
+
+        self.assertEqual(len(queries), 1)
+        self.assertEqual(stats.search_cap_warnings, 1)
+        self.assertEqual(stats.incomplete_search_warnings, 1)
 
 
 def _record(repo_id: int, full_name: str) -> RepoRecord:
