@@ -7,9 +7,8 @@ Publishing semantics:
 - Transient send failures are retried up to ``--max-retries`` times with
   exponential backoff. Records that exhaust retries are recorded as
   ``permanent_failures`` and logged.
-- Optional NDJSON output (``--output``) writes the same records to disk so
-  the validator script can pre-check the streaming path. The file is a
-  side-effect of the publish iterator; no second pass is made.
+- Optional NDJSON output (``--output``) writes successfully acknowledged
+  published records to disk so the validator can inspect the stream contents.
 - Optional publish checkpoint (``--checkpoint-path``) records every
   successfully published ``repo_id`` to a JSON file and skips ``repo_id``s
   already in that file on restart, providing idempotent recovery without
@@ -27,7 +26,7 @@ import logging
 import os
 import threading
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -146,24 +145,30 @@ def main() -> None:
     counters: dict[str, int] = {}
     try:
         counters = publish_records(
-            _tee_to_output(records, output_file),
+            records,
             producer,
             checkpoint=checkpoint,
+            max_in_flight=args.max_in_flight,
             max_retries=args.max_retries,
-            on_publish=_make_publish_logger(args.publish_log_every, args.topic),
+            on_publish=_combine_publish_callbacks(
+                _make_output_writer(output_file),
+                _make_publish_logger(args.publish_log_every, args.topic),
+            ),
         )
     finally:
-        if output_file is not None:
-            output_file.close()
         flush = getattr(producer, "flush", None)
         if flush is not None:
             flush()
+        if output_file is not None:
+            output_file.close()
         close = getattr(producer, "close", None)
         if close is not None:
             close()
         pulsar_client.close()
 
     log_publish_stats(counters, stats, client, args.topic, args.output)
+    if counters.get("permanent_failures", 0):
+        raise SystemExit(1)
 
 
 def publish_records(
@@ -172,6 +177,7 @@ def publish_records(
     on_publish: Callable[[RepoRecord], None] | None = None,
     on_failure: Callable[[RepoRecord], None] | None = None,
     checkpoint: PublishCheckpoint | None = None,
+    max_in_flight: int = 1000,
     max_retries: int = 3,
     retry_initial_seconds: float = 0.1,
 ) -> dict[str, int]:
@@ -181,9 +187,12 @@ def publish_records(
     errors retried), ``permanent_failures`` (records that exhausted retries),
     ``skipped_via_checkpoint``.
 
+    ``max_in_flight`` bounds outstanding records submitted to the broker.
     The producer must support ``send_async(content, callback, partition_key=...)``
     and ``flush()``. The real Pulsar client does; the test fake does too.
     """
+    if max_in_flight < 1:
+        raise ValueError("max_in_flight must be at least 1")
     counters: dict[str, int] = {
         "published": 0,
         "publish_failures": 0,
@@ -191,19 +200,24 @@ def publish_records(
         "skipped_via_checkpoint": 0,
     }
     lock = threading.Lock()
+    in_flight = threading.BoundedSemaphore(max_in_flight)
 
-    def send_with_retry(record: RepoRecord, attempt: int) -> None:
+    def send_with_retry(record: RepoRecord, attempt: int, release_slot: bool) -> None:
         content = record_to_message(record)
         partition_key = str(record.repo_id)
 
         def callback(result: Any, _msg_id: Any) -> None:
             if _is_send_ok(result):
-                with lock:
-                    counters["published"] += 1
-                if checkpoint is not None:
-                    checkpoint.mark_published(record.repo_id)
-                if on_publish is not None:
-                    on_publish(record)
+                try:
+                    with lock:
+                        counters["published"] += 1
+                    if checkpoint is not None:
+                        checkpoint.mark_published(record.repo_id)
+                    if on_publish is not None:
+                        on_publish(record)
+                finally:
+                    if release_slot:
+                        in_flight.release()
                 return
             with lock:
                 counters["publish_failures"] += 1
@@ -211,26 +225,36 @@ def publish_records(
                 delay = retry_initial_seconds * (2**attempt)
                 if delay > 0:
                     time.sleep(delay)
-                send_with_retry(record, attempt + 1)
+                send_with_retry(record, attempt + 1, release_slot=release_slot)
             else:
-                with lock:
-                    counters["permanent_failures"] += 1
-                if on_failure is not None:
-                    on_failure(record)
-                log.error(
-                    "permanent publish failure for repo_id=%s after %d attempts",
-                    record.repo_id,
-                    max_retries + 1,
-                )
+                try:
+                    with lock:
+                        counters["permanent_failures"] += 1
+                    if on_failure is not None:
+                        on_failure(record)
+                    log.error(
+                        "permanent publish failure for repo_id=%s after %d attempts",
+                        record.repo_id,
+                        max_retries + 1,
+                    )
+                finally:
+                    if release_slot:
+                        in_flight.release()
 
-        producer.send_async(content, callback, partition_key=partition_key)
+        try:
+            producer.send_async(content, callback, partition_key=partition_key)
+        except Exception:
+            if release_slot:
+                in_flight.release()
+            raise
 
     for record in records:
         if checkpoint is not None and checkpoint.already_published(record.repo_id):
             with lock:
                 counters["skipped_via_checkpoint"] += 1
             continue
-        send_with_retry(record, attempt=0)
+        in_flight.acquire()
+        send_with_retry(record, attempt=0, release_slot=True)
 
     producer.flush()
     if checkpoint is not None:
@@ -314,17 +338,6 @@ def _is_send_ok(result: Any) -> bool:
     return result == 0
 
 
-def _tee_to_output(
-    records: Iterable[RepoRecord],
-    output_file,
-) -> Iterator[RepoRecord]:
-    """Yield records, writing each to ``output_file`` as a side effect."""
-    for record in records:
-        if output_file is not None:
-            output_file.write(record.to_json_line())
-        yield record
-
-
 def _make_publish_logger(
     publish_log_every: int,
     topic: str,
@@ -337,6 +350,32 @@ def _make_publish_logger(
         state["count"] += 1
         if state["count"] % publish_log_every == 0:
             log.info("published %d crawler records to %s", state["count"], topic)
+
+    return on_publish
+
+
+def _make_output_writer(output_file) -> Callable[[RepoRecord], None] | None:
+    if output_file is None:
+        return None
+    lock = threading.Lock()
+
+    def on_publish(record: RepoRecord) -> None:
+        with lock:
+            output_file.write(record.to_json_line())
+
+    return on_publish
+
+
+def _combine_publish_callbacks(
+    *callbacks: Callable[[RepoRecord], None] | None,
+) -> Callable[[RepoRecord], None] | None:
+    active_callbacks = [callback for callback in callbacks if callback is not None]
+    if not active_callbacks:
+        return None
+
+    def on_publish(record: RepoRecord) -> None:
+        for callback in active_callbacks:
+            callback(record)
 
     return on_publish
 
@@ -380,6 +419,12 @@ def _parse_args() -> argparse.Namespace:
         type=int,
         default=3,
         help="bounded retry attempts per record on transient producer.send failure",
+    )
+    parser.add_argument(
+        "--max-in-flight",
+        type=int,
+        default=1000,
+        help="maximum records with outstanding async sends before crawling blocks",
     )
     parser.add_argument(
         "--publish-log-every",

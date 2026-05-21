@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
 from crawler.models import RepoRecord
 from streaming.pulsar_producer import (
     PublishCheckpoint,
+    _combine_publish_callbacks,
+    _make_output_writer,
     publish_records,
     record_to_message,
 )
@@ -42,6 +46,40 @@ class FakeProducer:
         self.flush_calls += 1
 
 
+class DelayedProducer:
+    """Async fake that records peak concurrent outstanding sends."""
+
+    def __init__(self, delay_seconds: float = 0.01) -> None:
+        self.delay_seconds = delay_seconds
+        self.messages: list[tuple[bytes, str | None]] = []
+        self._lock = threading.Lock()
+        self._threads: list[threading.Thread] = []
+        self.outstanding = 0
+        self.max_outstanding = 0
+        self.flush_calls = 0
+
+    def send_async(self, content, callback, partition_key=None):
+        with self._lock:
+            self.outstanding += 1
+            self.max_outstanding = max(self.max_outstanding, self.outstanding)
+
+        def complete() -> None:
+            time.sleep(self.delay_seconds)
+            with self._lock:
+                self.messages.append((content, partition_key))
+                self.outstanding -= 1
+            callback(_OkResult(), object())
+
+        thread = threading.Thread(target=complete)
+        thread.start()
+        self._threads.append(thread)
+
+    def flush(self):
+        self.flush_calls += 1
+        for thread in self._threads:
+            thread.join()
+
+
 class PulsarProducerTests(unittest.TestCase):
     def test_record_to_message_is_raw_crawler_json_without_newline(self) -> None:
         message = record_to_message(_record(123, "owner/repo"))
@@ -69,6 +107,19 @@ class PulsarProducerTests(unittest.TestCase):
             ["1", "2"],
         )
         self.assertEqual(producer.flush_calls, 1)
+
+    def test_publish_records_bounds_in_flight_sends(self) -> None:
+        producer = DelayedProducer()
+
+        counters = publish_records(
+            [_record(repo_id, f"owner/{repo_id}") for repo_id in range(1, 8)],
+            producer,
+            max_in_flight=2,
+            retry_initial_seconds=0.0,
+        )
+
+        self.assertEqual(counters["published"], 7)
+        self.assertLessEqual(producer.max_outstanding, 2)
 
     def test_publish_records_retries_transient_failures(self) -> None:
         producer = FakeProducer(fail_first_n=2)
@@ -103,6 +154,25 @@ class PulsarProducerTests(unittest.TestCase):
         self.assertEqual(failed_repo_ids, [7])
         self.assertEqual(producer.send_attempts, 3)
         self.assertEqual(len(producer.messages), 0)
+
+    def test_output_writer_records_only_successful_publishes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_path = Path(tmp) / "published.ndjson"
+            producer = FakeProducer(fail_first_n=10)
+            with output_path.open("w", encoding="utf-8", newline="\n") as output_file:
+                on_publish = _combine_publish_callbacks(
+                    _make_output_writer(output_file),
+                )
+                counters = publish_records(
+                    [_record(7, "owner/seven")],
+                    producer,
+                    on_publish=on_publish,
+                    max_retries=2,
+                    retry_initial_seconds=0.0,
+                )
+
+            self.assertEqual(counters["permanent_failures"], 1)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), "")
 
     def test_publish_records_skips_records_already_in_checkpoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
