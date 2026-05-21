@@ -52,6 +52,13 @@ git archive --format=tar.gz --output="${OLDPWD}/${REPO_ARCHIVE}" HEAD
 popd > /dev/null
 echo "  Created ${REPO_ARCHIVE}"
 
+# --- Copy archive to master ---
+echo "Copying repo to master (ubuntu@${MASTER_IP})..."
+scp -i "$PRIVATE_KEY_PATH" \
+    -o StrictHostKeyChecking=accept-new \
+    "$REPO_ARCHIVE" "ubuntu@${MASTER_IP}:/home/ubuntu/"
+echo "  Done."
+
 # --- Unpack repo on master ---
 echo "Unpacking repo on master..."
 ssh -i "$PRIVATE_KEY_PATH" \
@@ -60,19 +67,11 @@ ssh -i "$PRIVATE_KEY_PATH" \
     "mkdir -p ${REMOTE_REPO_DIR} && tar -xzf /home/ubuntu/${REPO_ARCHIVE} -C ${REMOTE_REPO_DIR} && rm /home/ubuntu/${REPO_ARCHIVE}"
 echo "  Unpacked to ${REMOTE_REPO_DIR}"
 
-# --- Copy archive to master ---
-echo "Copying repo to master (ubuntu@${MASTER_IP})..."
-scp -i "$PRIVATE_KEY_PATH" \
-    -o StrictHostKeyChecking=accept-new \
-    "$REPO_ARCHIVE"
-    "ubuntu@${MASTER_IP}:/home/ubuntu/"
-echo "  Done."
-
 # Clean up local archive
 rm -f "$REPO_ARCHIVE"
 
 # --- Run swarm setup ---
-echo "Running 'setup_swarm.sh'...'
+echo "Running 'setup_swarm.sh'..."
 ssh -i "$PRIVATE_KEY_PATH" \
     -o StrictHostKeyChecking=accept-new \
     "ubuntu@${MASTER_IP}" \
