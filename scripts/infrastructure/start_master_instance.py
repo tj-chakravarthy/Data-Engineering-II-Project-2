@@ -92,7 +92,7 @@ else:
 print("Waiting for cloud-init to finish...")
 max_attempts=30
 success = False
-for attempt in range(max_attempts):
+for attempt in range(1, max_attempts + 1):
     result = subprocess.run([
         "ssh",
         "-i", KEY_PATH,

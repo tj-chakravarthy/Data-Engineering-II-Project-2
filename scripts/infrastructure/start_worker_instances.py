@@ -134,5 +134,10 @@ else:
 print(f"\nDone. {len(active_instances)} worker(s) created:")
 for name, ip in active_instances:
     print(f"  {name}  {ip}")
+
+with open('workers_info.txt', 'w') as f:
+    for name, ip in active_instances:
+        f.write(f"{name}:{ip}\n")
+
 print(f"\nTo SSH onto a worker from the master:")
 print(f"  ssh -i ~/.ssh/cluster_key ubuntu@<worker-internal-ip>")

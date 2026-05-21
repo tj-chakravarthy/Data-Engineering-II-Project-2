@@ -1,0 +1,100 @@
+version: '3.8'
+
+networks:
+  pulsar-net:
+    driver: overlay
+
+services:
+
+  zookeeper:
+    image: apachepulsar/pulsar:4.0.10
+    command: bin/pulsar zookeeper
+    networks:
+      - pulsar-net
+    ports:
+      - "2181:2181"
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]  # runs on master
+      restart_policy:
+        condition: on-failure
+    environment:
+      - PULSAR_MEM=-Xms256m -Xmx256m
+    healthcheck:
+      test: ["CMD", "bin/pulsar-zookeeper-ruok.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  # Initializes cluster metadata in ZooKeeper — runs once and exits
+  pulsar-init:
+    image: apachepulsar/pulsar:4.0.10
+    command: >
+      bin/pulsar initialize-cluster-metadata
+        --cluster pulsar-cluster
+        --zookeeper zookeeper:2181
+        --configuration-store zookeeper:2181
+        --web-service-url http://broker:8080
+        --broker-service-url pulsar://broker:6650
+    networks:
+      - pulsar-net
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: none          # run once, do not restart
+    depends_on:
+      - zookeeper
+
+  bookie:
+    image: apachepulsar/pulsar:4.0.10
+    command: bin/pulsar bookie
+    networks:
+      - pulsar-net
+    environment:
+      - zkServers=zookeeper:2181
+      - PULSAR_MEM=-Xms512m -Xmx512m
+    deploy:
+      replicas: 4                # one per worker node
+      placement:
+        constraints: [node.role == worker]
+      restart_policy:
+        condition: on-failure
+    depends_on:
+      - zookeeper
+    healthcheck:
+      test: ["CMD", "bin/bookkeeper", "shell", "bookiesanity"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  broker:
+    image: apachepulsar/pulsar:4.0.10
+    command: bin/pulsar broker
+    networks:
+      - pulsar-net
+    ports:
+      - "6650:6650"   # Pulsar protocol (producers/consumers connect here)
+      - "8080:8080"   # Admin API
+    environment:
+      - zookeeperServers=zookeeper:2181
+      - configurationStoreServers=zookeeper:2181
+      - clusterName=pulsar-cluster
+      - PULSAR_MEM=-Xms512m -Xmx512m
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: on-failure
+    depends_on:
+      - zookeeper
+      - bookie
+    healthcheck:
+      test: ["CMD", "bin/pulsar-admin", "brokers", "healthcheck"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
