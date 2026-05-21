@@ -6,7 +6,7 @@ set -e
 
 WORKERS="w1 w2 w3 w4"
 REMOTE_REPO_DIR="/home/ubuntu/app"
-TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure/"
+TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure"
 STACK_FILE="${TARGET_PATH}/cluster-stack.yml"
 MAX_ATTEMPTS=30
 
@@ -85,36 +85,12 @@ for worker in $WORKERS; do
 done
 
 # -------------------------------------------------------------------
-# 5. Deploy stack
-#    All services are created at once; we then gate on each in order.
+# 5. Deploy stack and wait for Pulsar standalone to be ready
 # -------------------------------------------------------------------
 echo "Deploying pulsar stack..."
 docker stack deploy --detach=true -c "$STACK_FILE" pulsar
 
-echo "Waiting for ZooKeeper..."
-wait_for_service_replicas "pulsar_zookeeper" 1
-
-echo "Waiting for pulsar-init to complete..."
-for attempt in $(seq 1 30); do
-    state=$(docker service ps pulsar_pulsar-init --format '{{.CurrentState}}' 2>/dev/null | head -1)
-    if echo "$state" | grep -qi "complete"; then
-        echo "  pulsar-init completed."
-        break
-    fi
-    if echo "$state" | grep -qi "failed"; then
-        echo "ERROR: pulsar-init failed. Logs:"
-        docker service logs pulsar_pulsar-init --tail 50 || true
-        exit 1
-    fi
-    echo "  State: '$state' — waiting 10s... (attempt $attempt/30)"
-    sleep 10
-done
-
-echo "Waiting for bookies..."
-wait_for_service_replicas "pulsar_bookie" 4
-
-echo "Waiting for broker..."
-wait_for_service_replicas "pulsar_broker" 1
+wait_for_service_replicas "pulsar_pulsar" 1
 
 # -------------------------------------------------------------------
 # 6. Summary
