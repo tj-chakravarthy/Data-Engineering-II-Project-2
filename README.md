@@ -1,59 +1,40 @@
 # Data Engineering II Project 2
 
-GitHub analytic system using a streaming framework, developed for Uppsala University 1TD076 Data Engineering II, VT 2026, Group 16.
+GitHub analytics system using a streaming framework. Uppsala University 1TD076 Data Engineering II, VT 2026, Group 16.
 
-The system will collect GitHub repository metadata from the GitHub REST API, process it through a layered streaming architecture, and answer the four required project questions:
+We crawl GitHub repository metadata, stream it through Pulsar, and answer the four project questions from the brief:
 
 1. Top 10 programming languages by number of projects.
 2. Top 10 most frequently updated GitHub projects.
 3. Top 10 programming languages with the most projects using unit tests.
 4. Top 10 programming languages with the most projects using both unit tests and CI/DevOps.
 
-The original assignment PDF is in `Project 2 docs/DE-II_project_2-1.pdf`.
+Assignment PDF: `Project 2 docs/DE-II_project_2-1.pdf`.
 
 ## Setup
 
 Target environment: Linux (course VMs and team workstations).
 
-### 1. Clone
-
 ```bash
 git clone https://github.com/tj-chakravarthy/Data-Engineering-II-Project-2.git
 cd Data-Engineering-II-Project-2
-```
-
-### 2. Python Environment
-
-```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-```
-
-### 3. Credentials
-
-```bash
 cp .env.example .env
+# Edit .env and put your GitHub token in GITHUB_TOKEN.
 ```
 
-Fill in `GITHUB_TOKEN` in `.env`.
+You can drop additional tokens in as `GITHUB_TOKEN_2`, `GITHUB_TOKEN_3`, … Anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
 
-For team crawls, add all available GitHub tokens to `.env` as `GITHUB_TOKEN`,
-`GITHUB_TOKEN_2`, `GITHUB_TOKEN_3`, etc. The crawler automatically loads every
-environment variable whose name starts with `GITHUB_TOKEN`, rotates to the next
-token when one is rate-limited, and waits only when the full token pool is
-exhausted.
+## Running the crawler
 
-## Running the Crawler
+Two entry points share the same crawler core:
 
-The crawler collects repository metadata, handles pagination/rate limits, writes disk-backed cache files, and removes duplicates before downstream streaming/application logic receives the data.
+- **`streaming.pulsar_producer`** — streams each record live to a Pulsar topic. This is the path the graded pipeline uses end-to-end.
+- **`crawler.cli`** — same crawl but writes to a local NDJSON file instead. Handy when the broker isn't up or for offline checks.
 
-The system has two entry points sharing the same crawler core:
-
-- **`streaming.pulsar_producer`** (primary): streams each crawled record live to a Pulsar topic. This is what the graded streaming pipeline uses end-to-end.
-- **`crawler.cli`** (offline): runs the same crawl but writes records only to a local NDJSON file. Useful for offline analysis, the validator script, and when no broker is available.
-
-### Live-publish to Pulsar (primary path)
+### Live publish to Pulsar (primary)
 
 ```bash
 export PYTHONPATH=src
@@ -67,73 +48,56 @@ python3 -m streaming.pulsar_producer \
   --checkpoint-path data/output/repos.published.json
 ```
 
-- `--output` (optional) also mirrors each published record to a local NDJSON file, so the validator can pre-check the streaming path and offline analysis stays possible.
-- `--checkpoint-path` (optional) records every successfully published `repo_id` in a JSON file. On restart, `repo_id`s already in that file are skipped, giving idempotent recovery without consumer-side dedup state.
-- `--max-retries N` (default 3) bounds per-record retry on transient publisher failures.
+Notable flags:
+
+- `--output PATH` — also mirror every successfully published record to NDJSON. Handy for the validator and for sanity-checking what actually landed on the topic.
+- `--checkpoint-path PATH` — store every published `repo_id` in a JSON file; restarts skip ids already in it.
+- `--max-retries N` (default 3) — per-record retry budget on transient send failure.
+- `--max-in-flight N` (default 1000) — cap on outstanding async sends, keeps memory bounded when the broker is slow.
+
+Delivery is **at-least-once**. Retries and crashes can produce duplicate messages; downstream consumers must dedupe by `repo_id`. The checkpoint file shrinks the duplicate window but does not eliminate it.
+
+The producer exits with status 1 if any record permanently failed to publish — pipelines can check `$?`.
 
 ### Offline NDJSON crawl
 
+When Pulsar isn't around:
+
 ```bash
 export PYTHONPATH=src
-python3 -m crawler.cli --days 1 --limit 25 --cache-dir data/cache --output data/output/repos.ndjson
+python3 -m crawler.cli --days 1 --limit 25 \
+  --output data/output/repos.ndjson
 ```
+
+A larger run:
 
 ```bash
-python3 -m crawler.cli --days 365 --date-field created-or-pushed --cache-dir data/cache --output data/output/repos.ndjson
+python3 -m crawler.cli --days 365 --date-field created-or-pushed \
+  --output data/output/repos.ndjson
 ```
 
-Useful options:
+Useful options (shared between both entry points):
 
-- `--date-field created|pushed|created-or-pushed`: choose the GitHub date qualifier. `created-or-pushed` runs both date-sliced searches and globally deduplicates the output. The PDF's "updated" criterion is implemented as `pushed:` because GitHub's search API does not expose an `updated:` qualifier.
-- `--query "stars:>=10 archived:false"`: add extra GitHub search qualifiers.
-- `--refresh-cache`: refetch slices even if cache files exist.
-- `--no-cache`: stream without writing cache files.
-- `--limit-per-day N`: cap each date slice for testing. Limited slices are not written to cache because they are incomplete.
-- `--limit N`: cap total emitted records and API fetches for testing. Limited slices are not written to cache because they are incomplete.
-- `--memory-log-every N`: log Python memory samples every N emitted records.
-- `--max-memory-mb N`: stop the crawl if tracked Python memory exceeds N MB.
+- `--date-field created|pushed|created-or-pushed` — GitHub search date qualifier. `created-or-pushed` runs both and globally dedupes. GitHub's search API doesn't actually expose an `updated:` qualifier (we caught this in a live test), so the brief's "updated in the last year" criterion maps to `pushed:` (last commit) instead.
+- `--query "stars:>=10 archived:false"` — extra GitHub search qualifiers. **Very useful for scoping** — a full unfiltered last-year crawl is probably infeasible within the rate-limit budget, so adding a stars filter is the practical move.
+- `--refresh-cache` — refetch even if cache files exist.
+- `--no-cache` — stream without writing cache files.
+- `--limit N` / `--limit-per-day N` — caps for tests; limited slices are not cached.
+- `--memory-log-every N` / `--max-memory-mb N` — memory observability and kill switch.
 
-Crawler output:
+The crawler logs `search_splits`, `search_cap_warnings`, and `incomplete_search_warnings`. Both warning counters must be **zero** before treating a crawl as complete for report-grade results.
 
-- Cache files: `data/cache/repos_<date-field>_<YYYY-MM-DD>*.ndjson`
-- Output file: `data/output/repos.ndjson`
-- Records are deduplicated by stable GitHub repository ID before output.
-- CLI logs include `search_splits`, `search_cap_warnings`, and `incomplete_search_warnings`. Warning counters must be zero before treating a crawl as complete for report-grade results.
-- The output file is overwritten on each run by design. Use a different `--output` path for experiments or comparison runs. Cache files remain separate and are reused unless `--refresh-cache` is passed.
-- The Pulsar producer streams records as the crawler yields them. Complete API slices are written to a temporary cache file while records are published, then promoted to the final cache file only after the slice finishes successfully.
-- Live delivery is at-least-once across reruns. If publishing fails partway through a slice, already acknowledged messages remain in Pulsar and the incomplete temporary cache file is removed; downstream consumers should continue to use `repo_id` as the primary key.
-
-Validate a crawler handoff file before streaming ingestion:
+Validate a handoff file before downstream ingestion:
 
 ```bash
 python3 scripts/validate_crawler_output.py data/output/repos.ndjson
 ```
 
-Crawler handoff status:
+Non-zero exit means the file should not be streamed.
 
-- Implemented: date-sliced GitHub search, adaptive UTC time-range splitting for full uncapped runs, pagination, token-pool rate-limit handling, cache reuse, deduplication, memory sampling/limit checks, normalized NDJSON output, handoff validation, and unit tests.
-- Handoff contract: live producers publish raw crawler JSON unchanged to the `repos.raw` metadata topic and use `repo_id` as the message key.
-- Completeness guardrail: full uncapped runs split any slice that GitHub reports above 1000 results. If a slice still cannot be split enough, the crawler logs and counts a search-cap warning. Narrow the query before using that data as final.
-- Local smoke artifacts currently exist only under ignored `data/` paths and are not part of the committed submission.
+## Infrastructure
 
-Crawler handoff details are documented in `docs/crawler_handoff.md`.
-
-## Infrastructure Status
-
-Initial UPPMAX/OpenStack infrastructure scripts are available in
-`scripts/infrastructure/`.
-
-Implemented:
-
-- Provision one master VM named `group16-master`.
-- Provision four worker VMs named `group16-worker-1` through `group16-worker-4`.
-- Use the course `ssc.medium` flavor and Ubuntu 22.04 image.
-- Install base build tools and Docker on the master and workers through cloud-init.
-- Generate a cluster SSH key on the master and inject its public key into workers.
-- Configure the master so workers can be reached as `w1`, `w2`, etc.
-- Keep local OpenStack credentials out of git via `UPPMAX-openrc.sh.ignore`.
-
-Run from the infrastructure directory:
+Provisioning scripts live in `scripts/infrastructure/`. They use OpenStack + cloud-init to provision a master and four workers, all `ssc.medium` running Ubuntu 22.04 with Docker installed and SSH between nodes set up.
 
 ```bash
 cd scripts/infrastructure
@@ -142,135 +106,90 @@ cp UPPMAX-openrc.sh.template UPPMAX-openrc.sh.ignore
 ./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH>
 ```
 
-Current infrastructure QUESTIONS:
+Open items on the infra side:
 
-- Worker count is currently hard-coded to four.
-- Floating IP assignment is manual; the script asks for the assigned master IP.
-- The scripts provision VMs and Docker, but do not yet clone this repository on the VMs.
-- The scripts do not yet configure `.env`, GitHub tokens, Pulsar, or project services.
-- Docker Compose/service definitions for the full system are still missing.
-- A clean-VM reproduction guide still needs to be written once the streaming stack is connected.
+- Worker count is hard-coded to four; should be configurable.
+- Floating IP assignment is manual.
+- VMs come up with Docker but the repo isn't cloned and `.env` isn't seeded.
+- No `docker-compose.yml` for Pulsar yet
+- A clean-VM reproduction guide will get written once the streaming stack is actually running on a VM.
 
-## Streaming and Application Logic TODO
+## Streaming and application logic
 
-Required by project PDF:
-
-- TODO: Choose and configure the streaming framework, expected to be Apache Pulsar unless the team decides otherwise.
-- TODO: Define producer behavior for crawler output.
-- TODO: Define layered topics for raw metadata, commit enrichment, unit-test evidence, CI/DevOps evidence, and final aggregates.
-- TODO: Implement consumers/enrichers for Q2-Q4 metadata.
-- TODO: Implement aggregators for Q1-Q4.
-- TODO: Keep top-N configurable so top 10 can become top 20 without source-code changes.
-- TODO: Write reproducible result files for graph generation.
-
-Expected topic layout:
+Topic layout we're planning for, layered as the brief suggests:
 
 ```text
-repos.raw
-repos.with_commits
-repos.with_tests
-repos.with_ci
-repos.aggregates
+repos.raw            # producer writes here
+repos.with_commits   # commit-count enrichment for Q2
+repos.with_tests     # unit-test detection for Q3
+repos.with_ci        # CI/DevOps detection for Q4
+repos.aggregates     # final top-N tables for Q1–Q4
 ```
 
-Current live producer command shape:
+TODO:
+
+- Deploy a Pulsar broker (Docker compose on the master should work).
+- Consumers that enrich `repos.raw` → `repos.with_commits` / `with_tests` / `with_ci`. Q2 commits is the hardest one — GitHub's search response doesn't include commit counts, so we'll need a per-repo `GET /repos/.../commits?per_page=1` + `Link: last` trick. Need to scope this (e.g. stars filter) so we don't blow the rate limit on 365k repos.
+- Aggregators producing `repos.aggregates` with a configurable top-N (the brief explicitly tests "top 10 → top 20 without source changes").
+- Reproducible result files for the report's graphs.
+
+Producer ↔ consumer contract:
+
+- Messages on `repos.raw` are raw crawler JSON objects, byte-for-byte the same as the NDJSON output, no envelope.
+- Pulsar partition key is `str(repo_id)`.
+- Delivery is at-least-once; consumers use `repo_id`.
+
+## Experiments
+
+The brief wants scalability across multiple worker/VM counts (1, 2, 4 where feasible), throughput, runtime, memory, GitHub API wait time, and bottleneck identification.
+
+Realistic plan:
+
+- **Now**: producer-side experiments using `crawler.cli` (no broker needed). Vary token pool size, date window, query qualifier. The crawler already tracks `rate_limit_wait_seconds`, `peak_python_memory_kb`, and `search_splits` — those are the numbers to capture.
+- **Once broker + consumers are up**: end-to-end experiments where the "worker count" knob actually means something (consumer parallelism, partition count on the topic).
+
+Expected end-to-end command shape, once everything exists:
 
 ```bash
-docker compose up -d
-python3 -m streaming.pulsar_producer --broker pulsar://localhost:6650 --topic repos.raw
-python3 -m app.run_questions --top-n 10
-```
-
-Producer contract:
-
-- Publish each crawler JSON object unchanged to `repos.raw`.
-- Use `repo_id` as the Pulsar partition key.
-- Send asynchronously via `send_async`; `producer.flush()` blocks at end of run until every outstanding send is acked.
-- Retry transient send failures up to `--max-retries` (default 3) with exponential backoff before logging a `permanent_failures` record and continuing.
-- Delivery is at-least-once. Consumers MUST be idempotent on `repo_id` because retries can produce duplicate broker writes for the same record.
-- The optional publish checkpoint (`--checkpoint-path`) skips already-published `repo_id`s on restart, reducing — but not eliminating — duplicate writes after a crash.
-
-## Experiments TODO
-
-- TODO: Measure scalability across multiple worker/VM counts, such as 1, 2, and 4 workers where feasible.
-- TODO: Measure throughput.
-- TODO: Measure end-to-end runtime.
-- TODO: Measure memory use.
-- TODO: Measure GitHub API waiting/rate-limit time.
-- TODO: Identify bottlenecks.
-- TODO: Evaluate whether unnecessary inter-VM communication was avoided.
-- TODO: Save experiment results in a reproducible format.
-
-Expected final command shape:
-
-```bash
-# TODO: replace with real experiment command
 python3 -m experiments.run_scalability --workers 1,2,4 --input data/output/repos.ndjson
 ```
 
-## Report TODO
+## Report
 
-The final report must be max four pages and 3000 words and include:
+Max 4 pages AND 3000 words. Sections: Introduction, Related work, System architecture, Results. Results needs a graph per Q1–Q4, an adaptability discussion (top-10 vs top-20), interesting findings, and the scalability story.
 
-- TODO: Introduction.
-- TODO: Related work.
-- TODO: System architecture.
-- TODO: Results.
+Crawler-side things worth mentioning in the architecture / results sections:
 
-The Results section must include:
-
-- TODO: Graph for Q1.
-- TODO: Graph for Q2.
-- TODO: Graph for Q3.
-- TODO: Graph for Q4.
-- TODO: Interesting findings from the collected data.
-- TODO: Discussion of adaptability, including changing top 10 to top 20 without source-code changes.
-- TODO: Scalability results and interpretation.
-
-Crawler report notes to include:
-
-- The crawler stores results on disk as NDJSON cache files.
-- Cache files are used to resume/reuse GitHub API results and reduce repeated API calls.
-- Duplicate repositories are removed at the crawler/cache boundary using stable GitHub repository IDs.
-- Rate limits are handled through token pooling, token rotation, and looped reset waiting bounded by a total per-request wait budget.
-- Full uncapped runs recursively split high-volume day slices into smaller UTC time ranges to avoid GitHub's 1000-result search cap.
-- Completeness warnings are emitted when a final search slice still has more than 1000 results or GitHub marks results incomplete.
+- Day-sliced GitHub search with adaptive UTC time-range subdivision when a day exceeds the 1000-result API cap. We verified this works against real GitHub: a one-day `pushed:` query at `stars:>=100` returns ~17k records and the splitter recursively narrows it to 24 leaf ranges, all under 1000.
+- Token-pool rate-limit handling with rotation + bounded sleep + total-wait budget.
+- Cache-backed NDJSON storage; reruns hit the cache and don't burn API calls.
+- Dedup by stable `repo_id` at the crawler/cache boundary.
+- Live producer uses async `send_async` + `flush()`, bounded retry, optional checkpoint. At-least-once delivery, consumer-idempotent on `repo_id`.
 
 ## Testing
-
-Current crawler tests:
 
 ```bash
 export PYTHONPATH=src
 python3 -m unittest discover -s tests
 ```
 
-Validate crawler output:
+25 tests right now. Crawler covers date slicing, dedup, adaptive range splitting, streaming cache writes, rate-limit retry/budget. Producer covers async send, transient retry recovery, permanent failure handling, in-flight bound, checkpoint skip + persist, ack-gated NDJSON mirror.
 
-```bash
-python3 scripts/validate_crawler_output.py data/output/repos.ndjson
-```
-
-TODO:
-
-- Add integration tests for streaming producer/consumer flow.
-- Add smoke tests for Docker/services.
-- Add experiment reproducibility checks.
-- Add result/graph generation checks.
+Still TODO when the rest of the stack lands: integration tests for the producer→broker→consumer flow, smoke tests against the Docker compose, experiment reproducibility checks.
 
 ## Deadlines
 
-- Tentative status presentation: 25 May 2026 at 13:15.
-- Final submission: 29 May 2026 at 23:59.
+- Status presentation: **25 May 2026 at 13:15**.
+- Final submission: **29 May 2026 at 23:59**.
 
-## Definition of Done
+## Definition of done
 
-The project is complete only when:
+We're done when:
 
-- Docker containers and scripts can run the system.
-- The crawler collects last-year GitHub metadata with pagination, rate-limit handling, cache reuse, and deduplication.
-- Metadata flows through the streaming framework using documented producers, consumers, and topics.
-- Q1-Q4 produce quantified outputs and graphs.
-- Scalability experiments support the report claims.
-- The four-page report includes Introduction, Related work, System architecture, and Results.
-- The final demo/presentation explains architecture, results, experiments, and individual contributions.
+- Docker containers + scripts bring the whole system up reproducibly on the SSC VMs.
+- The crawler collects last-year GitHub metadata with pagination, rate-limit handling, cache reuse, and dedup.
+- Metadata flows through Pulsar via documented producer + consumers + topics.
+- Q1–Q4 produce quantified answers and graphs.
+- Scalability experiments back up the report claims.
+- The 4-page report is written.
+- The demo explains architecture, results, experiments, and individual contributions.
