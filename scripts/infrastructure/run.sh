@@ -60,16 +60,16 @@ ssh -i "$PRIVATE_KEY_PATH" \
     "mkdir -p ${REMOTE_REPO_DIR} && tar -xzf /home/ubuntu/${REPO_ARCHIVE} -C ${REMOTE_REPO_DIR} && rm /home/ubuntu/${REPO_ARCHIVE}"
 echo "  Unpacked to ${REMOTE_REPO_DIR}"
 
-# Clean up local archive
-rm -f "$REPO_ARCHIVE"
-
 # --- Copy archive to master ---
-echo "Copying files to master (ubuntu@${MASTER_IP})..."
+echo "Copying repo to master (ubuntu@${MASTER_IP})..."
 scp -i "$PRIVATE_KEY_PATH" \
     -o StrictHostKeyChecking=accept-new \
     "$REPO_ARCHIVE"
     "ubuntu@${MASTER_IP}:/home/ubuntu/"
 echo "  Done."
+
+# Clean up local archive
+rm -f "$REPO_ARCHIVE"
 
 # --- Run swarm setup ---
 echo "Running 'setup_swarm.sh'...'
