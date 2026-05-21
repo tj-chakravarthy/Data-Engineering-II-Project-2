@@ -87,6 +87,9 @@ done
 # -------------------------------------------------------------------
 # 5. Deploy stack and wait for Pulsar standalone to be ready
 # -------------------------------------------------------------------
+echo "Creating '/home/ubuntu/data' directory..."
+mkdir -p /home/ubuntu/data
+echo "  Done"
 echo "Deploying pulsar stack..."
 docker stack deploy --detach=true -c "$STACK_FILE" pulsar
 

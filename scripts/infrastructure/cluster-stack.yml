@@ -38,7 +38,7 @@ services:
       restart_policy:
         condition: on-failure
     volumes:
-      - ./data:/app/data
+      - /home/ubuntu/data:/app/data
     env_file:
       - .env
 

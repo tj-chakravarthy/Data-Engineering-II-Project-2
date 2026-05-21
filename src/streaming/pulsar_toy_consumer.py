@@ -10,7 +10,7 @@ import pulsar
 
 log = logging.getLogger(__name__)
 
-DEFAULT_BROKER_URL = "pulsar://localhost:6650"
+DEFAULT_BROKER_URL = "pulsar://pulsar:6650"
 DEFAULT_TOPIC = "persistent://public/default/github-repos"
 DEFAULT_SUBSCRIPTION = "debug-consumer"
 
