@@ -15,6 +15,19 @@ DEFAULT_TOPIC = "persistent://public/default/github-repos"
 DEFAULT_SUBSCRIPTION = "debug-consumer"
 
 
+def get_pulsar_client(broker_url: str, retries: int = 20, delay: int = 15) -> pulsar.Client:
+    for attempt in range(1, retries + 1):
+        try:
+            client = pulsar.Client(broker_url)
+            # Client constructor doesn't actually connect — force a connection check
+            client.create_producer("persistent://public/default/__healthcheck__")
+            return client
+        except Exception as e:
+            log.warning("Attempt %d/%d: Pulsar not ready (%s), retrying in %ds...", attempt, retries, e, delay)
+            time.sleep(delay)
+    raise RuntimeError(f"Could not connect to Pulsar after {retries} attempts.")
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -22,7 +35,7 @@ def main() -> None:
     topic = os.environ.get("PULSAR_TOPIC", DEFAULT_TOPIC)
     subscription = os.environ.get("PULSAR_SUBSCRIPTION", DEFAULT_SUBSCRIPTION)
 
-    client = pulsar.Client(broker_url)
+    client = get_pulsar_client(broker_url)
 
     consumer = client.subscribe(
         topic,
