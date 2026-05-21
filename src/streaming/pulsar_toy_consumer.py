@@ -5,9 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 
-import pulsar
+from streaming.pulsar_connection import get_pulsar_client
 
 log = logging.getLogger(__name__)
 
@@ -17,30 +16,6 @@ DEFAULT_TOPIC = "repos.raw"
 DEFAULT_SUBSCRIPTION = "debug-consumer"
 
 
-def get_pulsar_client(
-    broker_url: str,
-    retries: int = 20,
-    delay: int = 15,
-) -> pulsar.Client:
-    for attempt in range(1, retries + 1):
-        try:
-            client = pulsar.Client(broker_url)
-            # fixed by TJ: force a broker round trip without leaking the temp producer.
-            healthcheck = client.create_producer("persistent://public/default/__healthcheck__")
-            healthcheck.close()
-            return client
-        except Exception as exc:
-            log.warning(
-                "Attempt %d/%d: Pulsar not ready (%s), retrying in %ds...",
-                attempt,
-                retries,
-                exc,
-                delay,
-            )
-            time.sleep(delay)
-    raise RuntimeError(f"Could not connect to Pulsar after {retries} attempts.")
-
-
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -48,7 +23,18 @@ def main() -> None:
     topic = os.environ.get("PULSAR_TOPIC", DEFAULT_TOPIC)
     subscription = os.environ.get("PULSAR_SUBSCRIPTION", DEFAULT_SUBSCRIPTION)
 
-    client = get_pulsar_client(broker_url)
+    # fixed by TJ: PULSAR_MAX_MESSAGES lets us run a bounded smoke test
+    # ("consume N messages then exit"). Before this the consumer could only
+    # block forever, so there was no way to verify the pipeline and stop.
+    # Unset = run forever, which is what the Swarm service still wants.
+    max_messages_env = os.environ.get("PULSAR_MAX_MESSAGES")
+    max_messages = int(max_messages_env) if max_messages_env else None
+
+    # fixed by TJ: import pulsar lazily, like the producer does, so importing
+    # this module (e.g. in a test) does not require the pulsar-client package.
+    import pulsar
+
+    client = get_pulsar_client(broker_url, probe_topic=topic)
 
     consumer = client.subscribe(
         topic,
@@ -63,6 +49,7 @@ def main() -> None:
         subscription,
     )
 
+    consumed = 0
     try:
         while True:
             msg = consumer.receive()
@@ -84,6 +71,11 @@ def main() -> None:
             except Exception:
                 log.exception("failed to process message")
                 consumer.negative_acknowledge(msg)
+
+            consumed += 1
+            if max_messages is not None and consumed >= max_messages:
+                log.info("reached PULSAR_MAX_MESSAGES=%d; exiting", max_messages)
+                break
 
     finally:
         consumer.close()

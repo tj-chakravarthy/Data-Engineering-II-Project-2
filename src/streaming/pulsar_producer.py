@@ -42,6 +42,7 @@ from crawler.cli_args import (
 from crawler.crawl import CrawlStats, crawl_window, load_dotenv
 from crawler.github_client import GitHubClient
 from crawler.models import RepoRecord
+from streaming.pulsar_connection import get_pulsar_client
 
 DEFAULT_BROKER_URL = "pulsar://localhost:6650"
 DEFAULT_TOPIC = "repos.raw"
@@ -146,9 +147,13 @@ def main() -> None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         output_file = args.output.open("w", encoding="utf-8", newline="\n")
 
+    # fixed by TJ: pass counters in by reference so that if the crawl iterator
+    # raises partway through, the partial counts are still here for the final
+    # stats line. Before this, counters was only the return value, so a crash
+    # left it empty and the stats line logged all zeros.
     counters: dict[str, int] = {}
     try:
-        counters = publish_records(
+        publish_records(
             records,
             producer,
             checkpoint=checkpoint,
@@ -158,6 +163,7 @@ def main() -> None:
                 _make_output_writer(output_file),
                 _make_publish_logger(args.publish_log_every, args.topic),
             ),
+            counters=counters,
         )
     finally:
         flush = getattr(producer, "flush", None)
@@ -169,8 +175,11 @@ def main() -> None:
         if close is not None:
             close()
         pulsar_client.close()
+        # fixed by TJ: this is inside finally so partial crawl/publish stats
+        # still get logged when the records iterator raises and the exception
+        # is re-raised after cleanup.
+        log_publish_stats(counters, stats, client, args.topic, args.output)
 
-    log_publish_stats(counters, stats, client, args.topic, args.output)
     if counters.get("permanent_failures", 0):
         raise SystemExit(1)
 
@@ -184,6 +193,7 @@ def publish_records(
     max_in_flight: int = 1000,
     max_retries: int = 3,
     retry_initial_seconds: float = 0.1,
+    counters: dict[str, int] | None = None,
 ) -> dict[str, int]:
     """Publish crawler records via ``send_async`` with bounded retry.
 
@@ -194,15 +204,24 @@ def publish_records(
     ``max_in_flight`` bounds outstanding records submitted to the broker.
     The producer must support ``send_async(content, callback, partition_key=...)``
     and ``flush()``. The real Pulsar client does; the test fake does too.
+
+    ``counters`` may be supplied by the caller so partial counts survive an
+    exception raised by the ``records`` iterator; if omitted a fresh dict is
+    used. The same dict is returned either way.
     """
     if max_in_flight < 1:
         raise ValueError("max_in_flight must be at least 1")
-    counters: dict[str, int] = {
-        "published": 0,
-        "publish_failures": 0,
-        "permanent_failures": 0,
-        "skipped_via_checkpoint": 0,
-    }
+    # fixed by TJ: counters used to be a local dict, so if the crawl iterator
+    # raised midway the caller got nothing back and logged all zeros. Now the
+    # caller can pass its own dict in and still see the partial counts.
+    if counters is None:
+        counters = {}
+    counters.update(
+        published=0,
+        publish_failures=0,
+        permanent_failures=0,
+        skipped_via_checkpoint=0,
+    )
     lock = threading.Lock()
     completion = threading.Condition(lock)
     in_flight = threading.BoundedSemaphore(max_in_flight)
@@ -309,37 +328,17 @@ def record_to_message(record: RepoRecord) -> bytes:
     return record.to_json_line().rstrip("\n").encode("utf-8")
 
 
-def get_pulsar_client(url: str, retries: int = 20, delay: int = 15):
-    # fixed by TJ: keep the Pulsar import inside the retry helper so the
-    # container can actually connect after waiting for the broker to start.
-    try:
-        import pulsar
-    except ImportError as exc:
-        raise RuntimeError(
-            "Missing Pulsar Python client. Install dependencies with "
-            "`pip install -r requirements.txt`."
-        ) from exc
-
-    for attempt in range(1, retries + 1):
-        try:
-            client = pulsar.Client(url)
-            log.info("Connected to Pulsar at %s", url)
-            return client
-        except Exception as e:
-            log.info(
-                "Attempt %d/%d: Pulsar not ready (%s), retrying in %ds...",
-                attempt,
-                retries,
-                e,
-                delay,
-            )
-            time.sleep(delay)
-    raise RuntimeError(f"Could not connect to Pulsar after {retries} attempts.")
-
-
 def create_pulsar_producer(broker_url: str, topic: str):
-    """Create a Pulsar client and producer."""
-    client = get_pulsar_client(broker_url)
+    """Create a Pulsar client and producer, waiting for the broker if needed.
+
+    fixed by TJ: the old local get_pulsar_client only retried pulsar.Client(),
+    which is lazy and never actually connects, so the retry did nothing. Now
+    we use the shared helper that probes the broker for real by creating and
+    closing a producer on the target topic. By the time get_pulsar_client
+    returns, the broker is confirmed up, so the create_producer call below
+    will not fail on a slow-to-start broker.
+    """
+    client = get_pulsar_client(broker_url, probe_topic=topic)
     return client, client.create_producer(topic)
 
 

@@ -53,8 +53,14 @@ services:
       replicas: 1
       placement:
         constraints: [node.role == manager]
+      # fixed by TJ: the crawler is a one-shot batch job, not a service. It
+      # exits 0 when the crawl is done and exits 1 when some records hit a
+      # permanent publish failure. With restart_policy on-failure, an exit-1
+      # run would restart and re-crawl forever. condition: none means a failed
+      # run stays stopped so we can look at the logs instead of hiding the
+      # failure behind an endless restart loop.
       restart_policy:
-        condition: on-failure
+        condition: none
     volumes:
       # fixed by TJ: Swarm bind mounts should use the VM's absolute repo path.
       - /home/ubuntu/app/data:/app/data
