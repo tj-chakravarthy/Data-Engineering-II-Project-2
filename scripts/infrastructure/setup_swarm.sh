@@ -1,13 +1,13 @@
 #!/bin/bash
 # setup_swarm.sh
 # Run once from the master VM after all VMs are provisioned.
-# Assumes: cluster-stack.yml is at /home/ubuntu/cluster-stack.yml repo is
-# unpacked at /home/ubuntu/app
+# Assumes: repo is unpacked at /home/ubuntu/app
 set -e
 
 WORKERS="w1 w2 w3 w4"
 REMOTE_REPO_DIR="/home/ubuntu/app"
-STACK_FILE="/home/ubuntu/cluster-stack.yml"
+TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure/"
+STACK_FILE="${TARGET_PATH}/cluster-stack.yml"
 MAX_ATTEMPTS=30
 
 # -------------------------------------------------------------------
@@ -30,8 +30,6 @@ wait_for_cloud_init() {
 }
 
 wait_for_service_replicas() {
-    # Polls until all replicas of a service are running.
-    # Usage: wait_for_service_replicas <service_name> <expected_replicas>
     local service=$1
     local expected=$2
     echo "Waiting for service '$service' to reach $expected/$expected replicas..."
@@ -57,12 +55,11 @@ for worker in $WORKERS; do
 done
 
 # -------------------------------------------------------------------
-# 2. Copy repo to workers (master already has it at $REMOTE_REPO_DIR)
+# 2. Copy repo to workers
 # -------------------------------------------------------------------
 echo "Copying repo to workers..."
 for worker in $WORKERS; do
     echo "  -> $worker"
-    # Create a fresh tar from the already-unpacked dir and pipe it directly
     tar -czf - -C "$REMOTE_REPO_DIR" . \
         | ssh "$worker" "mkdir -p ${REMOTE_REPO_DIR} && tar -xzf - -C ${REMOTE_REPO_DIR}"
 done
@@ -72,13 +69,8 @@ echo "  Done."
 # 3. Init Docker Swarm on master
 # -------------------------------------------------------------------
 echo "Initializing Docker Swarm on master..."
-# Guard: if already a swarm manager, skip
-if docker info --format '{{.Swarm.LocalNodeState}}' 2>/dev/null | grep -q 'active'; then
-    echo "  Already in a swarm, skipping init."
-else
-    docker swarm init
-    echo "  Swarm initialized."
-fi
+docker swarm init
+echo "  Swarm initialized."
 
 JOIN_TOKEN=$(docker swarm join-token worker -q)
 MASTER_IP=$(hostname -I | awk '{print $1}')
@@ -88,40 +80,20 @@ MASTER_IP=$(hostname -I | awk '{print $1}')
 # -------------------------------------------------------------------
 for worker in $WORKERS; do
     echo "Joining $worker to swarm..."
-    # Skip if already joined
-    if ssh "$worker" "docker info --format '{{.Swarm.LocalNodeState}}'" 2>/dev/null | grep -q 'active'; then
-        echo "  $worker already in swarm, skipping."
-    else
-        ssh "$worker" "docker swarm join --token $JOIN_TOKEN $MASTER_IP:2377"
-        echo "  $worker joined."
-    fi
+    ssh "$worker" "docker swarm join --token $JOIN_TOKEN $MASTER_IP:2377"
+    echo "  $worker joined."
 done
 
 # -------------------------------------------------------------------
-# 5. Label nodes so placement constraints work
-#    cluster-stack.yml uses:
-#      node.role == manager  -> zookeeper, broker
-#      node.role == worker   -> bookie (x4)
+# 5. Deploy stack
+#    All services are created at once; we then gate on each in order.
 # -------------------------------------------------------------------
-echo "Verifying node labels..."
-docker node ls
-
-# -------------------------------------------------------------------
-# 6. Deploy stack in dependency order
-#    Swarm ignores depends_on at runtime, so we deploy services one
-#    at a time and wait for each to be healthy before moving on.
-# -------------------------------------------------------------------
-echo "Deploying pulsar stack (step by step)..."
-
-# Step 1: ZooKeeper
+echo "Deploying pulsar stack..."
 docker stack deploy --detach=true -c "$STACK_FILE" pulsar
-# docker stack deploy creates all services at once; we gate progress manually.
 
-echo ""
-echo "Waiting for ZooKeeper to be healthy before proceeding..."
+echo "Waiting for ZooKeeper..."
 wait_for_service_replicas "pulsar_zookeeper" 1
 
-# Step 2: ZooKeeper is up, now verify pulsar-init ran (it's replicas: 1, restart: none)
 echo "Waiting for pulsar-init to complete..."
 for attempt in $(seq 1 30); do
     state=$(docker service ps pulsar_pulsar-init --format '{{.CurrentState}}' 2>/dev/null | head -1)
@@ -138,29 +110,21 @@ for attempt in $(seq 1 30); do
     sleep 10
 done
 
-# Step 3: Bookies
-echo "Waiting for all 4 bookies..."
+echo "Waiting for bookies..."
 wait_for_service_replicas "pulsar_bookie" 4
 
-# Step 4: Broker
 echo "Waiting for broker..."
 wait_for_service_replicas "pulsar_broker" 1
 
 # -------------------------------------------------------------------
-# 7. Summary
+# 6. Summary
 # -------------------------------------------------------------------
 echo ""
 echo "==== Deployment complete ===="
 echo ""
-echo "Node status:"
 docker node ls
 echo ""
-echo "Service status:"
 docker service ls
 echo ""
-echo "Pulsar broker:  pulsar://$(hostname -I | awk '{print $1}'):6650"
-echo "Admin API:      http://$(hostname -I | awk '{print $1}'):8080"
-echo ""
-echo "Test connectivity:"
-echo "  docker run --rm --network host apachepulsar/pulsar:4.0.10 \\"
-echo "    bin/pulsar-admin --admin-url http://localhost:8080 brokers list pulsar-cluster"
+echo "Pulsar broker:  pulsar://${MASTER_IP}:6650"
+echo "Admin API:      http://${MASTER_IP}:8080"
