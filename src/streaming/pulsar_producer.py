@@ -1,0 +1,394 @@
+"""Live Pulsar producer for crawler records.
+
+Publishing semantics:
+
+- Async send via Pulsar's ``send_async`` for throughput; ``producer.flush()``
+  blocks at end of run until every outstanding send has been acked.
+- Transient send failures are retried up to ``--max-retries`` times with
+  exponential backoff. Records that exhaust retries are recorded as
+  ``permanent_failures`` and logged.
+- Optional NDJSON output (``--output``) writes the same records to disk so
+  the validator script can pre-check the streaming path. The file is a
+  side-effect of the publish iterator; no second pass is made.
+- Optional publish checkpoint (``--checkpoint-path``) records every
+  successfully published ``repo_id`` to a JSON file and skips ``repo_id``s
+  already in that file on restart, providing idempotent recovery without
+  consumer-side dedup.
+
+Delivery model: at-least-once. Consumers MUST be idempotent on ``repo_id``
+because retries can produce duplicate broker writes for the same record.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import threading
+import time
+from collections.abc import Callable, Iterable, Iterator
+from pathlib import Path
+from typing import Any, Protocol
+
+from crawler.cli_args import (
+    add_crawl_args,
+    add_rate_limit_args,
+    build_crawl_config,
+)
+from crawler.crawl import CrawlStats, crawl_window, load_dotenv
+from crawler.github_client import GitHubClient
+from crawler.models import RepoRecord
+
+DEFAULT_BROKER_URL = "pulsar://localhost:6650"
+DEFAULT_TOPIC = "repos.raw"
+
+log = logging.getLogger(__name__)
+
+
+class AsyncProducer(Protocol):
+    """Subset of the Pulsar Producer API the publisher needs."""
+
+    def send_async(
+        self,
+        content: bytes,
+        callback: Callable[[Any, Any], None],
+        partition_key: str | None = None,
+    ) -> None: ...
+
+    def flush(self) -> None: ...
+
+
+class PublishCheckpoint:
+    """JSON-backed set of successfully published ``repo_id``s.
+
+    Threadsafe: the publisher's async callbacks run from Pulsar's I/O thread
+    pool, so ``mark_published`` may be invoked concurrently.
+    """
+
+    def __init__(self, path: Path | None, save_every: int = 1000) -> None:
+        self.path = path
+        self.save_every = save_every
+        self._published_ids: set[int] = set()
+        self._dirty = 0
+        self._lock = threading.Lock()
+        if path is not None and path.exists():
+            self._load()
+
+    @property
+    def published_count(self) -> int:
+        with self._lock:
+            return len(self._published_ids)
+
+    def already_published(self, repo_id: int) -> bool:
+        with self._lock:
+            return repo_id in self._published_ids
+
+    def mark_published(self, repo_id: int) -> None:
+        if self.path is None:
+            return
+        should_save = False
+        with self._lock:
+            self._published_ids.add(repo_id)
+            self._dirty += 1
+            if self._dirty >= self.save_every:
+                should_save = True
+        if should_save:
+            self.save()
+
+    def save(self) -> None:
+        if self.path is None:
+            return
+        with self._lock:
+            payload = {"published_repo_ids": sorted(self._published_ids)}
+            self._dirty = 0
+        tmp = self.path.with_suffix(self.path.suffix + ".tmp")
+        tmp.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as file:
+            json.dump(payload, file)
+        tmp.replace(self.path)
+
+    def _load(self) -> None:
+        assert self.path is not None
+        with self.path.open(encoding="utf-8") as file:
+            data = json.load(file)
+        loaded = data.get("published_repo_ids", [])
+        self._published_ids = {int(repo_id) for repo_id in loaded}
+
+
+def main() -> None:
+    args = _parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    load_dotenv()
+
+    config = build_crawl_config(args)
+    client = GitHubClient(
+        max_wait_seconds=args.max_wait_seconds,
+        max_total_wait_seconds=args.max_total_wait_seconds,
+    )
+
+    pulsar_client, producer = create_pulsar_producer(args.broker, args.topic)
+    records, stats = crawl_window(client, config)
+
+    checkpoint = PublishCheckpoint(args.checkpoint_path) if args.checkpoint_path else None
+    if checkpoint is not None and checkpoint.published_count:
+        log.info(
+            "loaded publish checkpoint %s with %d previously published repo_ids",
+            args.checkpoint_path,
+            checkpoint.published_count,
+        )
+
+    output_file = None
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        output_file = args.output.open("w", encoding="utf-8", newline="\n")
+
+    counters: dict[str, int] = {}
+    try:
+        counters = publish_records(
+            _tee_to_output(records, output_file),
+            producer,
+            checkpoint=checkpoint,
+            max_retries=args.max_retries,
+            on_publish=_make_publish_logger(args.publish_log_every, args.topic),
+        )
+    finally:
+        if output_file is not None:
+            output_file.close()
+        flush = getattr(producer, "flush", None)
+        if flush is not None:
+            flush()
+        close = getattr(producer, "close", None)
+        if close is not None:
+            close()
+        pulsar_client.close()
+
+    log_publish_stats(counters, stats, client, args.topic, args.output)
+
+
+def publish_records(
+    records: Iterable[RepoRecord],
+    producer: AsyncProducer,
+    on_publish: Callable[[RepoRecord], None] | None = None,
+    on_failure: Callable[[RepoRecord], None] | None = None,
+    checkpoint: PublishCheckpoint | None = None,
+    max_retries: int = 3,
+    retry_initial_seconds: float = 0.1,
+) -> dict[str, int]:
+    """Publish crawler records via ``send_async`` with bounded retry.
+
+    Returns counters: ``published``, ``publish_failures`` (transient send
+    errors retried), ``permanent_failures`` (records that exhausted retries),
+    ``skipped_via_checkpoint``.
+
+    The producer must support ``send_async(content, callback, partition_key=...)``
+    and ``flush()``. The real Pulsar client does; the test fake does too.
+    """
+    counters: dict[str, int] = {
+        "published": 0,
+        "publish_failures": 0,
+        "permanent_failures": 0,
+        "skipped_via_checkpoint": 0,
+    }
+    lock = threading.Lock()
+
+    def send_with_retry(record: RepoRecord, attempt: int) -> None:
+        content = record_to_message(record)
+        partition_key = str(record.repo_id)
+
+        def callback(result: Any, _msg_id: Any) -> None:
+            if _is_send_ok(result):
+                with lock:
+                    counters["published"] += 1
+                if checkpoint is not None:
+                    checkpoint.mark_published(record.repo_id)
+                if on_publish is not None:
+                    on_publish(record)
+                return
+            with lock:
+                counters["publish_failures"] += 1
+            if attempt < max_retries:
+                delay = retry_initial_seconds * (2**attempt)
+                if delay > 0:
+                    time.sleep(delay)
+                send_with_retry(record, attempt + 1)
+            else:
+                with lock:
+                    counters["permanent_failures"] += 1
+                if on_failure is not None:
+                    on_failure(record)
+                log.error(
+                    "permanent publish failure for repo_id=%s after %d attempts",
+                    record.repo_id,
+                    max_retries + 1,
+                )
+
+        producer.send_async(content, callback, partition_key=partition_key)
+
+    for record in records:
+        if checkpoint is not None and checkpoint.already_published(record.repo_id):
+            with lock:
+                counters["skipped_via_checkpoint"] += 1
+            continue
+        send_with_retry(record, attempt=0)
+
+    producer.flush()
+    if checkpoint is not None:
+        checkpoint.save()
+
+    return counters
+
+
+def record_to_message(record: RepoRecord) -> bytes:
+    """Serialize one crawler record as raw JSON for Pulsar."""
+    return record.to_json_line().rstrip("\n").encode("utf-8")
+
+
+def create_pulsar_producer(broker_url: str, topic: str):
+    """Create a Pulsar client and producer."""
+    try:
+        import pulsar
+    except ImportError as exc:
+        raise RuntimeError(
+            "Missing Pulsar Python client. Install dependencies with "
+            "`pip install -r requirements.txt`."
+        ) from exc
+
+    client = pulsar.Client(broker_url)
+    return client, client.create_producer(topic)
+
+
+def log_publish_stats(
+    counters: dict[str, int],
+    stats: CrawlStats,
+    client: GitHubClient,
+    topic: str,
+    output_path: Path | None,
+) -> None:
+    log.info(
+        "published %d records to Pulsar topic %s (publish_failures=%d "
+        "permanent_failures=%d skipped_via_checkpoint=%d)",
+        counters.get("published", 0),
+        topic,
+        counters.get("publish_failures", 0),
+        counters.get("permanent_failures", 0),
+        counters.get("skipped_via_checkpoint", 0),
+    )
+    if output_path is not None:
+        log.info("wrote NDJSON mirror of crawler output to %s", output_path)
+    log.info(
+        "crawl stats: emitted=%d fetched=%d cache_written=%d loaded_from_cache=%d "
+        "slice_duplicates=%d global_duplicates=%d api_slices=%d cache_slices=%d "
+        "memory_samples=%d peak_python_memory_kb=%d "
+        "search_splits=%d search_cap_warnings=%d incomplete_search_warnings=%d "
+        "rate_limit_waits=%d rate_limit_wait_seconds=%d",
+        stats.emitted,
+        stats.fetched,
+        stats.written_to_cache,
+        stats.loaded_from_cache,
+        stats.duplicate_in_slice,
+        stats.duplicate_global,
+        stats.slices_from_api,
+        stats.slices_from_cache,
+        stats.memory_samples,
+        stats.peak_python_memory_kb,
+        stats.search_splits,
+        stats.search_cap_warnings,
+        stats.incomplete_search_warnings,
+        client.rate_limit_waits,
+        client.rate_limit_wait_seconds,
+    )
+
+
+def _is_send_ok(result: Any) -> bool:
+    """Detect a successful Pulsar send result without importing pulsar.
+
+    Pulsar's ``Result.Ok`` enum value is 0 and its ``name`` attribute is
+    ``"Ok"``. Fake producers used in tests can return ``None`` or 0.
+    """
+    if result is None:
+        return True
+    name = getattr(result, "name", None)
+    if isinstance(name, str):
+        return name == "Ok"
+    return result == 0
+
+
+def _tee_to_output(
+    records: Iterable[RepoRecord],
+    output_file,
+) -> Iterator[RepoRecord]:
+    """Yield records, writing each to ``output_file`` as a side effect."""
+    for record in records:
+        if output_file is not None:
+            output_file.write(record.to_json_line())
+        yield record
+
+
+def _make_publish_logger(
+    publish_log_every: int,
+    topic: str,
+) -> Callable[[RepoRecord], None] | None:
+    if not publish_log_every:
+        return None
+    state = {"count": 0}
+
+    def on_publish(_record: RepoRecord) -> None:
+        state["count"] += 1
+        if state["count"] % publish_log_every == 0:
+            log.info("published %d crawler records to %s", state["count"], topic)
+
+    return on_publish
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Live-publish crawler records to an Apache Pulsar topic."
+    )
+    add_crawl_args(parser)
+    add_rate_limit_args(parser)
+    parser.add_argument(
+        "--broker",
+        default=os.environ.get("PULSAR_SERVICE_URL", DEFAULT_BROKER_URL),
+        help="Pulsar service URL; default comes from PULSAR_SERVICE_URL or localhost",
+    )
+    parser.add_argument(
+        "--topic",
+        default=os.environ.get("PULSAR_TOPIC", DEFAULT_TOPIC),
+        help="Pulsar topic for raw crawler records; default: repos.raw",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help=(
+            "optional NDJSON mirror of the published records, written alongside "
+            "publishing; used by the validator and for offline analysis"
+        ),
+    )
+    parser.add_argument(
+        "--checkpoint-path",
+        type=Path,
+        default=None,
+        help=(
+            "optional publish checkpoint file; previously published repo_ids "
+            "are skipped on restart for idempotent recovery"
+        ),
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="bounded retry attempts per record on transient producer.send failure",
+    )
+    parser.add_argument(
+        "--publish-log-every",
+        type=int,
+        default=1000,
+        help="log every N successfully sent Pulsar messages; set 0 to disable",
+    )
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    main()

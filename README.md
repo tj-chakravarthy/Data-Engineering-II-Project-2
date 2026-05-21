@@ -38,21 +38,47 @@ cp .env.example .env
 
 Fill in `GITHUB_TOKEN` in `.env`.
 
+For team crawls, add all available GitHub tokens to `.env` as `GITHUB_TOKEN`,
+`GITHUB_TOKEN_2`, `GITHUB_TOKEN_3`, etc. The crawler automatically loads every
+environment variable whose name starts with `GITHUB_TOKEN`, rotates to the next
+token when one is rate-limited, and waits only when the full token pool is
+exhausted.
+
 ## Running the Crawler
 
 The crawler collects repository metadata, handles pagination/rate limits, writes disk-backed cache files, and removes duplicates before downstream streaming/application logic receives the data.
 
-Run a small local crawl:
+The system has two entry points sharing the same crawler core:
+
+- **`streaming.pulsar_producer`** (primary): streams each crawled record live to a Pulsar topic. This is what the graded streaming pipeline uses end-to-end.
+- **`crawler.cli`** (offline): runs the same crawl but writes records only to a local NDJSON file. Useful for offline analysis, the validator script, and when no broker is available.
+
+### Live-publish to Pulsar (primary path)
+
+```bash
+export PYTHONPATH=src
+python3 -m streaming.pulsar_producer \
+  --broker pulsar://localhost:6650 \
+  --topic repos.raw \
+  --days 365 \
+  --date-field created-or-pushed \
+  --cache-dir data/cache \
+  --output data/output/repos.ndjson \
+  --checkpoint-path data/output/repos.published.json
+```
+
+- `--output` (optional) also mirrors each published record to a local NDJSON file, so the validator can pre-check the streaming path and offline analysis stays possible.
+- `--checkpoint-path` (optional) records every successfully published `repo_id` in a JSON file. On restart, `repo_id`s already in that file are skipped, giving idempotent recovery without consumer-side dedup state.
+- `--max-retries N` (default 3) bounds per-record retry on transient publisher failures.
+
+### Offline NDJSON crawl
 
 ```bash
 export PYTHONPATH=src
 python3 -m crawler.cli --days 1 --limit 25 --cache-dir data/cache --output data/output/repos.ndjson
 ```
 
-Run a larger crawl:
-
 ```bash
-export PYTHONPATH=src
 python3 -m crawler.cli --days 365 --date-field created-or-pushed --cache-dir data/cache --output data/output/repos.ndjson
 ```
 
@@ -73,6 +99,9 @@ Crawler output:
 - Output file: `data/output/repos.ndjson`
 - Records are deduplicated by stable GitHub repository ID before output.
 - CLI logs include `search_splits`, `search_cap_warnings`, and `incomplete_search_warnings`. Warning counters must be zero before treating a crawl as complete for report-grade results.
+- The output file is overwritten on each run by design. Use a different `--output` path for experiments or comparison runs. Cache files remain separate and are reused unless `--refresh-cache` is passed.
+- The Pulsar producer streams records as the crawler yields them. Complete API slices are written to a temporary cache file while records are published, then promoted to the final cache file only after the slice finishes successfully.
+- Live delivery is at-least-once across reruns. If publishing fails partway through a slice, already acknowledged messages remain in Pulsar and the incomplete temporary cache file is removed; downstream consumers should continue to use `repo_id` as the primary key.
 
 Validate a crawler handoff file before streaming ingestion:
 
@@ -83,30 +112,44 @@ python3 scripts/validate_crawler_output.py data/output/repos.ndjson
 Crawler handoff status:
 
 - Implemented: date-sliced GitHub search, adaptive UTC time-range splitting for full uncapped runs, pagination, token-pool rate-limit handling, cache reuse, deduplication, memory sampling/limit checks, normalized NDJSON output, handoff validation, and unit tests.
-- Handoff contract: producers should publish each NDJSON line unchanged to the raw repository metadata topic and treat `repo_id` as the primary key.
+- Handoff contract: live producers publish raw crawler JSON unchanged to the `repos.raw` metadata topic and use `repo_id` as the message key.
 - Completeness guardrail: full uncapped runs split any slice that GitHub reports above 1000 results. If a slice still cannot be split enough, the crawler logs and counts a search-cap warning. Narrow the query before using that data as final.
 - Local smoke artifacts currently exist only under ignored `data/` paths and are not part of the committed submission.
 
 Crawler handoff details are documented in `docs/crawler_handoff.md`.
 
-## Infrastructure TODO
+## Infrastructure Status
 
-Required by project for highest grade:
+Initial UPPMAX/OpenStack infrastructure scripts are available in
+`scripts/infrastructure/`.
 
-- TODO: Provide one script to initialize the head VM and configurable worker VMs.
-- TODO: Install all required packages on the head VM and worker VMs.
-- TODO: Configure Docker/services needed to run the full system.
-- TODO: Configure shared SSH access for team members.
-- TODO: Assume `ssc.medium` VMs unless the team decides otherwise.
-- TODO: Make worker count configurable instead of hard-coding four workers.
-- TODO: Document how to reproduce the environment from a clean VM.
+Implemented:
 
-Expected final command shape:
+- Provision one master VM named `group16-master`.
+- Provision four worker VMs named `group16-worker-1` through `group16-worker-4`.
+- Use the course `ssc.medium` flavor and Ubuntu 22.04 image.
+- Install base build tools and Docker on the master and workers through cloud-init.
+- Generate a cluster SSH key on the master and inject its public key into workers.
+- Configure the master so workers can be reached as `w1`, `w2`, etc.
+- Keep local OpenStack credentials out of git via `UPPMAX-openrc.sh.ignore`.
+
+Run from the infrastructure directory:
 
 ```bash
-# TODO: replace with real infrastructure command
-./scripts/provision.sh --workers 4
+cd scripts/infrastructure
+cp UPPMAX-openrc.sh.template UPPMAX-openrc.sh.ignore
+# Fill in OpenStack values in UPPMAX-openrc.sh.ignore.
+./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH>
 ```
+
+Current infrastructure QUESTIONS:
+
+- Worker count is currently hard-coded to four.
+- Floating IP assignment is manual; the script asks for the assigned master IP.
+- The scripts provision VMs and Docker, but do not yet clone this repository on the VMs.
+- The scripts do not yet configure `.env`, GitHub tokens, Pulsar, or project services.
+- Docker Compose/service definitions for the full system are still missing.
+- A clean-VM reproduction guide still needs to be written once the streaming stack is connected.
 
 ## Streaming and Application Logic TODO
 
@@ -130,22 +173,22 @@ repos.with_ci
 repos.aggregates
 ```
 
-Expected final command shape:
+Current live producer command shape:
 
 ```bash
-# TODO: replace with real streaming/application commands
 docker compose up -d
-python3 -m app.producer --input data/output/repos.ndjson
+python3 -m streaming.pulsar_producer --broker pulsar://localhost:6650 --topic repos.raw
 python3 -m app.run_questions --top-n 10
 ```
 
-Producer input contract:
+Producer contract:
 
-- Read `data/output/repos.ndjson` line by line.
-- Validate the file first with `scripts/validate_crawler_output.py`.
-- Publish each JSON object unchanged to `repos.raw`.
-- Use `repo_id` as the message key when the streaming framework supports keyed messages.
-- Do not rededuplicate downstream unless a validation failure or manual data edit is detected.
+- Publish each crawler JSON object unchanged to `repos.raw`.
+- Use `repo_id` as the Pulsar partition key.
+- Send asynchronously via `send_async`; `producer.flush()` blocks at end of run until every outstanding send is acked.
+- Retry transient send failures up to `--max-retries` (default 3) with exponential backoff before logging a `permanent_failures` record and continuing.
+- Delivery is at-least-once. Consumers MUST be idempotent on `repo_id` because retries can produce duplicate broker writes for the same record.
+- The optional publish checkpoint (`--checkpoint-path`) skips already-published `repo_id`s on restart, reducing — but not eliminating — duplicate writes after a crash.
 
 ## Experiments TODO
 

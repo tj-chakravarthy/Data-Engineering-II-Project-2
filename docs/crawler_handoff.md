@@ -35,6 +35,18 @@ Default cache location:
 data/cache/
 ```
 
+The CLI overwrites `data/output/repos.ndjson` on each run so that this path
+always represents the latest materialized crawler output. For experiments,
+comparisons, or partial runs, pass a run-specific `--output` path such as
+`data/output/repos_7day_stars10.ndjson`. Cache files are independent from the
+output file and are reused unless `--refresh-cache` is passed.
+
+For live streaming, `streaming.pulsar_producer` consumes the crawler iterator
+directly and publishes records as they are yielded. When the crawler fetches a
+complete API slice, it writes each record to a temporary cache file and yields it
+immediately; the temporary cache file is promoted to the final cache path only
+after the full slice completes.
+
 Cache files are one date/query slice per file:
 
 ```text
@@ -49,6 +61,24 @@ data/cache/repos_pushed_2026-05-19_stars_10_archived_false.ndjson
 ```
 
 Limited test runs using `--limit` or `--limit-per-day` do not write cache files for fetched slices because the slice is intentionally incomplete. Full slices are cached and can be reused by later runs.
+
+## GitHub Tokens and Rate Limits
+
+The crawler uses a token pool. Any environment variable whose name starts with
+`GITHUB_TOKEN` is loaded automatically, for example:
+
+```text
+GITHUB_TOKEN=...
+GITHUB_TOKEN_2=...
+GITHUB_TOKEN_3=...
+GITHUB_TOKEN_4=...
+GITHUB_TOKEN_5=...
+```
+
+For each GitHub request, the client tries the current token and rotates through
+the pool when a token is rate-limited. If every configured token is exhausted,
+the client waits for reset, bounded by the configured per-request total wait
+budget.
 
 ## Output Format
 
@@ -77,11 +107,38 @@ Downstream producers should publish these records to the raw repository metadata
 
 Recommended producer behavior:
 
-- read the output file line by line so large crawls do not need to fit in memory;
+- use `python3 -m streaming.pulsar_producer` for live publishing (the primary path);
+- the producer streams records directly from the crawler — no intermediate file read pass is required;
+- pass `--output data/output/repos.ndjson` if an NDJSON mirror is also wanted for the validator or for offline analysis;
 - publish each JSON object unchanged to the raw metadata topic;
-- use `repo_id` as the message key when the streaming framework supports keyed messages;
+- use `repo_id` as the Pulsar partition key;
 - treat `full_name` as display data, not as the primary key;
 - keep downstream enrichment fields additive instead of rewriting crawler-owned fields.
+
+## Delivery Semantics
+
+The producer uses asynchronous `send_async` with `producer.flush()` at end of
+run, and bounded retry (`--max-retries`, default 3, with exponential backoff)
+on transient send failures. Delivery is **at-least-once**: a record can be
+written to Pulsar more than once if a retry fires after the broker actually
+accepted the original send, or across reruns of a crashed producer.
+
+**Downstream consumers MUST be idempotent on `repo_id`.** The crawler key in
+the message and the natural primary key in the data are both `repo_id`, so
+consumer-side dedup is straightforward (e.g., upsert keyed on `repo_id`, or
+read-before-write).
+
+The optional `--checkpoint-path` flag persists every successfully published
+`repo_id` to a JSON file and skips already-published `repo_id`s on restart.
+This reduces — but does not eliminate — duplicate broker writes after a crash,
+because in-flight sends may have been acked just before the crash without yet
+being recorded in the checkpoint file. The consumer-idempotency requirement
+stands either way.
+
+Records that exhaust `--max-retries` are logged as `permanent_failures` and
+the run continues with the remaining records. Permanent failures should be
+treated as a runbook alert: re-run the crawler with the same checkpoint to
+re-attempt only those records.
 
 ## Deduplication Contract
 
@@ -130,6 +187,25 @@ Full last-year crawl using both created-date and pushed-date slices:
 export PYTHONPATH=src
 python3 -m crawler.cli --days 365 --date-field created-or-pushed --cache-dir data/cache --output data/output/repos.ndjson
 ```
+
+Live Pulsar publishing to `repos.raw`:
+
+```bash
+export PYTHONPATH=src
+python3 -m streaming.pulsar_producer \
+  --broker pulsar://localhost:6650 \
+  --topic repos.raw \
+  --days 365 \
+  --date-field created-or-pushed \
+  --cache-dir data/cache \
+  --output data/output/repos.ndjson \
+  --checkpoint-path data/output/repos.published.json
+```
+
+`--output` mirrors the published records to NDJSON so the validator can run
+against the streaming path; omit it if you only need the live topic. See
+"Delivery Semantics" above for at-least-once behavior, retry, and idempotency
+requirements.
 
 Individual date modes are also supported:
 
