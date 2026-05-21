@@ -8,7 +8,10 @@ Publishing semantics:
   exponential backoff. Records that exhaust retries are recorded as
   ``permanent_failures`` and logged.
 - Optional NDJSON output (``--output``) writes successfully acknowledged
-  published records to disk so the validator can inspect the stream contents.
+  published records to disk so the validator can inspect what this run sent.
+  The file is truncated on each run and does not include records skipped via
+  the publish checkpoint — treat it as a publication log for THIS run, not as
+  a snapshot of the topic.
 - Optional publish checkpoint (``--checkpoint-path``) records every
   successfully published ``repo_id`` to a JSON file and skips ``repo_id``s
   already in that file on restart, providing idempotent recovery without
@@ -212,9 +215,21 @@ def publish_records(
                     with lock:
                         counters["published"] += 1
                     if checkpoint is not None:
-                        checkpoint.mark_published(record.repo_id)
+                        try:
+                            checkpoint.mark_published(record.repo_id)
+                        except Exception:
+                            log.exception(
+                                "checkpoint.mark_published failed for repo_id=%s; continuing",
+                                record.repo_id,
+                            )
                     if on_publish is not None:
-                        on_publish(record)
+                        try:
+                            on_publish(record)
+                        except Exception:
+                            log.exception(
+                                "on_publish callback raised for repo_id=%s; continuing",
+                                record.repo_id,
+                            )
                 finally:
                     if release_slot:
                         in_flight.release()
@@ -231,7 +246,13 @@ def publish_records(
                     with lock:
                         counters["permanent_failures"] += 1
                     if on_failure is not None:
-                        on_failure(record)
+                        try:
+                            on_failure(record)
+                        except Exception:
+                            log.exception(
+                                "on_failure callback raised for repo_id=%s; continuing",
+                                record.repo_id,
+                            )
                     log.error(
                         "permanent publish failure for repo_id=%s after %d attempts",
                         record.repo_id,
@@ -375,7 +396,14 @@ def _combine_publish_callbacks(
 
     def on_publish(record: RepoRecord) -> None:
         for callback in active_callbacks:
-            callback(record)
+            try:
+                callback(record)
+            except Exception:
+                log.exception(
+                    "combined publish callback %r raised for repo_id=%s; continuing",
+                    getattr(callback, "__name__", callback),
+                    record.repo_id,
+                )
 
     return on_publish
 
@@ -401,8 +429,11 @@ def _parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help=(
-            "optional NDJSON mirror of the published records, written alongside "
-            "publishing; used by the validator and for offline analysis"
+            "optional NDJSON publication log for THIS run: every record that "
+            "is successfully sent to Pulsar is also written here. The file is "
+            "truncated on each run and does NOT include records skipped via "
+            "--checkpoint-path. Treat as 'what we sent this run', not 'what's "
+            "on the topic'."
         ),
     )
     parser.add_argument(

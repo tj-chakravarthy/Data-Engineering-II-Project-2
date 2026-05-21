@@ -109,7 +109,7 @@ Recommended producer behavior:
 
 - use `python3 -m streaming.pulsar_producer` for live publishing (the primary path);
 - the producer streams records directly from the crawler — no intermediate file read pass is required;
-- pass `--output data/output/repos.ndjson` if an NDJSON mirror is also wanted for the validator or for offline analysis;
+- pass `--output data/output/repos.ndjson` if a per-run NDJSON publication log is wanted for the validator or for offline analysis (the file is truncated each run and does not include records skipped via `--checkpoint-path`);
 - publish each JSON object unchanged to the raw metadata topic;
 - use `repo_id` as the Pulsar partition key;
 - treat `full_name` as display data, not as the primary key;

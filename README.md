@@ -50,7 +50,7 @@ python3 -m streaming.pulsar_producer \
 
 Notable flags:
 
-- `--output PATH` — also mirror every successfully published record to NDJSON. Handy for the validator and for sanity-checking what actually landed on the topic.
+- `--output PATH` — write every successfully sent record to NDJSON. The file is a **publication log for this run** (truncated on each run, does not include records skipped via `--checkpoint-path`), not a snapshot of the topic.
 - `--checkpoint-path PATH` — store every published `repo_id` in a JSON file; restarts skip ids already in it.
 - `--max-retries N` (default 3) — per-record retry budget on transient send failure.
 - `--max-in-flight N` (default 1000) — cap on outstanding async sends, keeps memory bounded when the broker is slow.

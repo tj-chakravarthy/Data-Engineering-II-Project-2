@@ -198,6 +198,51 @@ class PulsarProducerTests(unittest.TestCase):
                 ["2"],
             )
 
+    def test_publish_records_survives_raising_on_publish_callback(self) -> None:
+        producer = FakeProducer()
+        seen: list[int] = []
+
+        def raising(record):
+            seen.append(record.repo_id)
+            raise RuntimeError("simulated disk full")
+
+        counters = publish_records(
+            [_record(1, "owner/one"), _record(2, "owner/two")],
+            producer,
+            on_publish=raising,
+            retry_initial_seconds=0.0,
+        )
+
+        # Both records were sent, both raised in the callback, both still
+        # count as published (the broker did accept them).
+        self.assertEqual(counters["published"], 2)
+        self.assertEqual(counters["permanent_failures"], 0)
+        self.assertEqual(seen, [1, 2])
+
+    def test_combine_publish_callbacks_isolates_failures(self) -> None:
+        producer = FakeProducer()
+        good_records: list[int] = []
+
+        def raising(_record):
+            raise RuntimeError("simulated callback failure")
+
+        def good(record):
+            good_records.append(record.repo_id)
+
+        on_publish = _combine_publish_callbacks(raising, good)
+
+        counters = publish_records(
+            [_record(1, "owner/one"), _record(2, "owner/two")],
+            producer,
+            on_publish=on_publish,
+            retry_initial_seconds=0.0,
+        )
+
+        # Even though `raising` fails on every record, `good` still ran
+        # for every record and the run completed normally.
+        self.assertEqual(counters["published"], 2)
+        self.assertEqual(good_records, [1, 2])
+
     def test_publish_records_persists_checkpoint_after_run(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint_path = Path(tmp) / "publish.json"
