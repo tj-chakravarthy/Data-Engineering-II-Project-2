@@ -2,8 +2,9 @@
 
 Publishing semantics:
 
-- Async send via Pulsar's ``send_async`` for throughput; ``producer.flush()``
-  blocks at end of run until every outstanding send has been acked.
+- Async send via Pulsar's ``send_async`` for throughput; the publisher waits
+  for every logical record to either be acked or exhaust retries before the
+  run completes.
 - Transient send failures are retried up to ``--max-retries`` times with
   exponential backoff. Records that exhaust retries are recorded as
   ``permanent_failures`` and logged.
@@ -203,7 +204,27 @@ def publish_records(
         "skipped_via_checkpoint": 0,
     }
     lock = threading.Lock()
+    completion = threading.Condition(lock)
     in_flight = threading.BoundedSemaphore(max_in_flight)
+    logical_in_flight = 0
+
+    def mark_record_started() -> None:
+        nonlocal logical_in_flight
+        with completion:
+            logical_in_flight += 1
+
+    def mark_record_done(release_slot: bool) -> None:
+        nonlocal logical_in_flight
+        if release_slot:
+            in_flight.release()
+        with completion:
+            logical_in_flight -= 1
+            completion.notify_all()
+
+    def wait_for_all_records() -> None:
+        with completion:
+            while logical_in_flight:
+                completion.wait()
 
     def send_with_retry(record: RepoRecord, attempt: int, release_slot: bool) -> None:
         content = record_to_message(record)
@@ -231,8 +252,7 @@ def publish_records(
                                 record.repo_id,
                             )
                 finally:
-                    if release_slot:
-                        in_flight.release()
+                    mark_record_done(release_slot)
                 return
             with lock:
                 counters["publish_failures"] += 1
@@ -259,14 +279,12 @@ def publish_records(
                         max_retries + 1,
                     )
                 finally:
-                    if release_slot:
-                        in_flight.release()
+                    mark_record_done(release_slot)
 
         try:
             producer.send_async(content, callback, partition_key=partition_key)
         except Exception:
-            if release_slot:
-                in_flight.release()
+            mark_record_done(release_slot)
             raise
 
     for record in records:
@@ -275,8 +293,10 @@ def publish_records(
                 counters["skipped_via_checkpoint"] += 1
             continue
         in_flight.acquire()
+        mark_record_started()
         send_with_retry(record, attempt=0, release_slot=True)
 
+    wait_for_all_records()
     producer.flush()
     if checkpoint is not None:
         checkpoint.save()

@@ -80,6 +80,44 @@ class DelayedProducer:
             thread.join()
 
 
+class SnapshotFlushRetryProducer:
+    """Async fake whose flush only waits for sends known when flush starts."""
+
+    def __init__(self, delay_seconds: float = 0.01) -> None:
+        self.delay_seconds = delay_seconds
+        self.messages: list[tuple[bytes, str | None]] = []
+        self._lock = threading.Lock()
+        self._threads: list[threading.Thread] = []
+        self.send_attempts = 0
+        self.flush_calls = 0
+
+    def send_async(self, content, callback, partition_key=None):
+        with self._lock:
+            self.send_attempts += 1
+            attempt = self.send_attempts
+
+        def complete() -> None:
+            time.sleep(self.delay_seconds)
+            if attempt == 1:
+                callback(_FailResult(), None)
+                return
+            with self._lock:
+                self.messages.append((content, partition_key))
+            callback(_OkResult(), object())
+
+        thread = threading.Thread(target=complete)
+        thread.start()
+        with self._lock:
+            self._threads.append(thread)
+
+    def flush(self):
+        self.flush_calls += 1
+        with self._lock:
+            threads = list(self._threads)
+        for thread in threads:
+            thread.join()
+
+
 class PulsarProducerTests(unittest.TestCase):
     def test_record_to_message_is_raw_crawler_json_without_newline(self) -> None:
         message = record_to_message(_record(123, "owner/repo"))
@@ -135,6 +173,22 @@ class PulsarProducerTests(unittest.TestCase):
         self.assertEqual(counters["publish_failures"], 2)
         self.assertEqual(counters["permanent_failures"], 0)
         self.assertEqual(producer.send_attempts, 3)
+        self.assertEqual(len(producer.messages), 1)
+
+    def test_publish_records_waits_for_async_retry_completion(self) -> None:
+        producer = SnapshotFlushRetryProducer()
+
+        counters = publish_records(
+            [_record(1, "owner/one")],
+            producer,
+            max_retries=2,
+            retry_initial_seconds=0.02,
+        )
+
+        self.assertEqual(counters["published"], 1)
+        self.assertEqual(counters["publish_failures"], 1)
+        self.assertEqual(counters["permanent_failures"], 0)
+        self.assertEqual(producer.send_attempts, 2)
         self.assertEqual(len(producer.messages), 1)
 
     def test_publish_records_records_permanent_failure_after_max_retries(self) -> None:
