@@ -44,6 +44,8 @@ class GitHubClient:
         max_wait_seconds: int = 60,
         max_total_wait_seconds: int = 3600,
         timeout_seconds: int = 30,
+        max_transient_retries: int = 5,
+        transient_retry_initial_seconds: float = 1.0,
     ) -> None:
         if tokens is None:
             tokens = [
@@ -61,9 +63,12 @@ class GitHubClient:
         self.max_wait_seconds = max_wait_seconds
         self.max_total_wait_seconds = max_total_wait_seconds
         self.timeout_seconds = timeout_seconds
+        self.max_transient_retries = max_transient_retries
+        self.transient_retry_initial_seconds = transient_retry_initial_seconds
         self.session = requests.Session()
         self.rate_limit_waits = 0
         self.rate_limit_wait_seconds = 0
+        self.transient_retries = 0
 
     def get(
         self,
@@ -80,15 +85,25 @@ class GitHubClient:
         url = path if path.startswith("http") else f"{self.base_url}{path}"
         total_waited = 0
         last_rate_limited: requests.Response | None = None
+        transient_attempts = 0
 
         while True:
+            retry_transient = False
             for _ in range(len(self.tokens)):
-                response = self.session.get(
-                    url,
-                    headers=self._headers(),
-                    params=params,
-                    timeout=self.timeout_seconds,
-                )
+                try:
+                    response = self.session.get(
+                        url,
+                        headers=self._headers(),
+                        params=params,
+                        timeout=self.timeout_seconds,
+                    )
+                except requests.RequestException as exc:
+                    if transient_attempts < self.max_transient_retries:
+                        transient_attempts += 1
+                        self._sleep_before_transient_retry(transient_attempts, url)
+                        retry_transient = True
+                        break
+                    raise exc
                 if response.status_code == 200:
                     return response
                 if _is_rate_limited(response):
@@ -96,8 +111,17 @@ class GitHubClient:
                     log.info("Rate-limited; rotating GitHub token")
                     self._rotate_token()
                     continue
+                if _is_transient_server_error(response):
+                    if transient_attempts < self.max_transient_retries:
+                        transient_attempts += 1
+                        self._sleep_before_transient_retry(transient_attempts, url)
+                        retry_transient = True
+                        break
+                    response.raise_for_status()
                 response.raise_for_status()
 
+            if retry_transient:
+                continue
             if total_waited >= self.max_total_wait_seconds:
                 raise RateLimitError(
                     f"Exhausted rate-limit wait budget ({total_waited}s) for {url}"
@@ -200,6 +224,20 @@ class GitHubClient:
         time.sleep(wait)
         return wait
 
+    def _sleep_before_transient_retry(self, attempt: int, url: str) -> None:
+        wait = self.transient_retry_initial_seconds * (2 ** (attempt - 1))
+        self.transient_retries += 1
+        log.warning(
+            "Transient GitHub error for %s; retrying in %.1fs "
+            "(attempt %d/%d)",
+            url,
+            wait,
+            attempt,
+            self.max_transient_retries,
+        )
+        if wait > 0:
+            time.sleep(wait)
+
 
 def _is_rate_limited(response: requests.Response) -> bool:
     if response.status_code not in (403, 429):
@@ -207,6 +245,10 @@ def _is_rate_limited(response: requests.Response) -> bool:
     if response.headers.get("X-RateLimit-Remaining") == "0":
         return True
     return "rate limit" in response.text.lower()
+
+
+def _is_transient_server_error(response: requests.Response) -> bool:
+    return response.status_code in {500, 502, 503, 504}
 
 
 def _extract_items(payload: Any) -> list[dict[str, Any]]:

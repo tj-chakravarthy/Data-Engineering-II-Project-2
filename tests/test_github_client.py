@@ -3,6 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from crawler.github_client import GitHubClient, RateLimitError
 
 
@@ -68,6 +70,80 @@ class GitHubClientRateLimitTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             client.get("/x")
+
+    def test_transient_server_error_is_retried(self) -> None:
+        client = GitHubClient(
+            tokens=["t1"],
+            max_transient_retries=2,
+            transient_retry_initial_seconds=0.0,
+        )
+        bad_gateway = _response(502)
+        ok = _response(200, json_payload={"ok": True})
+        client.session = MagicMock()
+        client.session.get.side_effect = [bad_gateway, ok]
+
+        result = client.get("/x")
+
+        self.assertIs(result, ok)
+        self.assertEqual(client.session.get.call_count, 2)
+        self.assertEqual(client.transient_retries, 1)
+        bad_gateway.raise_for_status.assert_not_called()
+
+    def test_transient_server_error_raises_after_retry_budget(self) -> None:
+        client = GitHubClient(
+            tokens=["t1"],
+            max_transient_retries=1,
+            transient_retry_initial_seconds=0.0,
+        )
+        bad_gateway = _response(502)
+        bad_gateway.raise_for_status.side_effect = RuntimeError("502 Bad Gateway")
+        client.session = MagicMock()
+        client.session.get.return_value = bad_gateway
+
+        with self.assertRaises(RuntimeError):
+            client.get("/x")
+
+        self.assertEqual(client.session.get.call_count, 2)
+        self.assertEqual(client.transient_retries, 1)
+
+    def test_request_exception_is_retried(self) -> None:
+        """Network-level errors (no HTTP response at all) follow the same
+        transient-retry path as 5xx responses."""
+        client = GitHubClient(
+            tokens=["t1"],
+            max_transient_retries=2,
+            transient_retry_initial_seconds=0.0,
+        )
+        ok = _response(200, json_payload={"ok": True})
+        client.session = MagicMock()
+        client.session.get.side_effect = [
+            requests.ConnectionError("connection reset"),
+            ok,
+        ]
+
+        result = client.get("/x")
+
+        self.assertIs(result, ok)
+        self.assertEqual(client.session.get.call_count, 2)
+        self.assertEqual(client.transient_retries, 1)
+
+    def test_request_exception_raises_after_retry_budget(self) -> None:
+        client = GitHubClient(
+            tokens=["t1"],
+            max_transient_retries=1,
+            transient_retry_initial_seconds=0.0,
+        )
+        client.session = MagicMock()
+        client.session.get.side_effect = requests.ConnectionError(
+            "connection refused"
+        )
+
+        with self.assertRaises(requests.ConnectionError):
+            client.get("/x")
+
+        # one original attempt + one retry = 2 calls, then raise
+        self.assertEqual(client.session.get.call_count, 2)
+        self.assertEqual(client.transient_retries, 1)
 
     def test_search_repositories_exposes_first_page_metadata(self) -> None:
         client = GitHubClient(tokens=["t1"])
