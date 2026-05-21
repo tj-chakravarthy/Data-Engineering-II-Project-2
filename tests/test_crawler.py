@@ -114,6 +114,65 @@ class CrawlerTests(unittest.TestCase):
             self.assertEqual(duplicates, 1)
             self.assertEqual(len(list(cache.read_slice("created", "2026-05-19"))), 2)
 
+    def test_cache_streams_records_before_promoting_complete_slice(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = RepoCache(Path(tmp))
+            final_path = cache.path_for_slice("created", "2026-05-19")
+            tmp_path = final_path.with_suffix(final_path.suffix + ".tmp")
+            writes = 0
+            duplicates = 0
+
+            def on_write() -> None:
+                nonlocal writes
+                writes += 1
+
+            def on_duplicate() -> None:
+                nonlocal duplicates
+                duplicates += 1
+
+            stream = cache.write_slice_streaming(
+                "created",
+                "2026-05-19",
+                [
+                    _record(1, "owner/one"),
+                    _record(1, "owner/one"),
+                    _record(2, "owner/two"),
+                ],
+                on_write=on_write,
+                on_duplicate=on_duplicate,
+            )
+
+            first = next(stream)
+            self.assertEqual(first.repo_id, 1)
+            self.assertEqual(writes, 1)
+            self.assertEqual(duplicates, 0)
+            self.assertTrue(tmp_path.exists())
+            self.assertFalse(final_path.exists())
+
+            self.assertEqual([record.repo_id for record in stream], [2])
+            self.assertEqual(writes, 2)
+            self.assertEqual(duplicates, 1)
+            self.assertTrue(final_path.exists())
+            self.assertFalse(tmp_path.exists())
+
+    def test_cache_removes_temp_file_when_stream_is_interrupted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cache = RepoCache(Path(tmp))
+            final_path = cache.path_for_slice("created", "2026-05-19")
+            tmp_path = final_path.with_suffix(final_path.suffix + ".tmp")
+
+            stream = cache.write_slice_streaming(
+                "created",
+                "2026-05-19",
+                [_record(1, "owner/one"), _record(2, "owner/two")],
+            )
+
+            self.assertEqual(next(stream).repo_id, 1)
+            self.assertTrue(tmp_path.exists())
+            stream.close()
+            self.assertFalse(tmp_path.exists())
+            self.assertFalse(final_path.exists())
+
     def test_crawl_window_deduplicates_before_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config = CrawlConfig(

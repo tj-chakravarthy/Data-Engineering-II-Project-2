@@ -225,15 +225,20 @@ def _records_for_slice(
         and config.limit_per_day is None
     )
     if writes_complete_slice:
-        written, duplicates = cache.write_slice(
+        def on_write() -> None:
+            stats.written_to_cache += 1
+
+        def on_duplicate() -> None:
+            stats.duplicate_in_slice += 1
+
+        yield from cache.write_slice_streaming(
             date_field,
             day,
             records,
             config.query_suffix,
+            on_write=on_write,
+            on_duplicate=on_duplicate,
         )
-        stats.written_to_cache += written
-        stats.duplicate_in_slice += duplicates
-        yield from cache.read_slice(date_field, day, config.query_suffix)
         return
 
     seen_slice: set[str] = set()
@@ -367,6 +372,14 @@ def _record_search_metadata(metadata: SearchMetadata, stats: CrawlStats) -> None
 
 
 def _full_day_range(day: str) -> SearchRange:
+    """Return the inclusive UTC range covering one calendar day.
+
+    The end is `23:59:59`, not `23:59:59.999999`, because GitHub timestamps
+    are second-resolution: the API stores `pushed_at` / `created_at` as
+    `YYYY-MM-DDTHH:MM:SSZ` with no sub-second component, and the search
+    qualifier `<field>:start..end` is inclusive on both ends. There is no
+    sub-second gap to miss.
+    """
     start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     end = start + timedelta(days=1) - timedelta(seconds=1)
     return SearchRange(start=start, end=end)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 
 from crawler.models import RepoRecord
@@ -44,24 +44,73 @@ class RepoCache:
         query_suffix: str = "",
     ) -> tuple[int, int]:
         """Write a deduplicated slice. Returns `(written, duplicates_skipped)`."""
-        path = self.path_for_slice(date_field, day, query_suffix)
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        seen: set[str] = set()
         written = 0
         duplicates = 0
 
-        with tmp.open("w", encoding="utf-8", newline="\n") as file:
-            for record in records:
-                key = record.dedupe_key()
-                if key in seen:
-                    duplicates += 1
-                    continue
-                seen.add(key)
-                file.write(record.to_json_line())
-                written += 1
+        def on_write() -> None:
+            nonlocal written
+            written += 1
 
-        tmp.replace(path)
+        def on_duplicate() -> None:
+            nonlocal duplicates
+            duplicates += 1
+
+        for _ in self.write_slice_streaming(
+            date_field,
+            day,
+            records,
+            query_suffix,
+            on_write=on_write,
+            on_duplicate=on_duplicate,
+        ):
+            pass
+
         return written, duplicates
+
+    def write_slice_streaming(
+        self,
+        date_field: str,
+        day: str,
+        records: Iterable[RepoRecord],
+        query_suffix: str = "",
+        on_write: Callable[[], None] | None = None,
+        on_duplicate: Callable[[], None] | None = None,
+    ) -> Iterator[RepoRecord]:
+        """Write a deduplicated slice while yielding records immediately.
+
+        The final cache file is replaced only after the full input iterable is
+        consumed. If the run fails partway through, downstream consumers may
+        have received live records, but an incomplete cache file is not promoted.
+
+        We do not fsync per record: the temp file is unlinked on any failure
+        path, so per-record flushes would only protect against another process
+        tailing the temp file (no such consumer exists). Python's default I/O
+        buffering plus the final close-on-promote is sufficient.
+        """
+        path = self.path_for_slice(date_field, day, query_suffix)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        seen: set[str] = set()
+        promoted = False
+
+        try:
+            with tmp.open("w", encoding="utf-8", newline="\n") as file:
+                for record in records:
+                    key = record.dedupe_key()
+                    if key in seen:
+                        if on_duplicate:
+                            on_duplicate()
+                        continue
+                    seen.add(key)
+                    file.write(record.to_json_line())
+                    if on_write:
+                        on_write()
+                    yield record
+
+            tmp.replace(path)
+            promoted = True
+        finally:
+            if not promoted and tmp.exists():
+                tmp.unlink()
 
 
 def _safe_suffix(query_suffix: str) -> str:
@@ -72,4 +121,3 @@ def _safe_suffix(query_suffix: str) -> str:
         for char in query_suffix.strip().lower()
     ).strip("_")
     return f"_{cleaned}" if cleaned else ""
-
