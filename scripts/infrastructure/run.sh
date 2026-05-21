@@ -5,6 +5,7 @@ set -e
 VENV_DIR=".venv"
 REPO_ARCHIVE="repo.tar.gz"
 REMOTE_REPO_DIR="/home/ubuntu/app"
+TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure/"
 LOCAL_REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 if [[ $# -ne 2 || $1 == "--help" ]]; then
@@ -51,16 +52,6 @@ git archive --format=tar.gz --output="${OLDPWD}/${REPO_ARCHIVE}" HEAD
 popd > /dev/null
 echo "  Created ${REPO_ARCHIVE}"
 
-# --- Copy archive + setup_swarm.sh + cluster-stack.yml to master ---
-echo "Copying files to master (ubuntu@${MASTER_IP})..."
-scp -i "$PRIVATE_KEY_PATH" \
-    -o StrictHostKeyChecking=accept-new \
-    "$REPO_ARCHIVE" \
-    setup_swarm.sh \
-    cluster-stack.yml \
-    "ubuntu@${MASTER_IP}:/home/ubuntu/"
-echo "  Done."
-
 # --- Unpack repo on master ---
 echo "Unpacking repo on master..."
 ssh -i "$PRIVATE_KEY_PATH" \
@@ -72,8 +63,18 @@ echo "  Unpacked to ${REMOTE_REPO_DIR}"
 # Clean up local archive
 rm -f "$REPO_ARCHIVE"
 
-echo ""
-echo "All VMs provisioned."
-echo "Next step: SSH into the master and run setup_swarm.sh"
-echo "  ssh -i $PRIVATE_KEY_PATH ubuntu@${MASTER_IP}"
-echo "  chmod u+x setup_swarm.sh && ./setup_swarm.sh"
+# --- Copy archive to master ---
+echo "Copying files to master (ubuntu@${MASTER_IP})..."
+scp -i "$PRIVATE_KEY_PATH" \
+    -o StrictHostKeyChecking=accept-new \
+    "$REPO_ARCHIVE"
+    "ubuntu@${MASTER_IP}:/home/ubuntu/"
+echo "  Done."
+
+# --- Run swarm setup ---
+echo "Running 'setup_swarm.sh'...'
+ssh -i "$PRIVATE_KEY_PATH" \
+    -o StrictHostKeyChecking=accept-new \
+    "ubuntu@${MASTER_IP}" \
+    "${TARGET_PATH}/setup_swarm.sh"
+echo "  Ran ${TARGET_PATH}/setup_swarm.sh"
