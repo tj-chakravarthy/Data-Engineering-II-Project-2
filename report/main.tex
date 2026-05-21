@@ -1,0 +1,228 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+% ------------------
+% Packages
+% ------------------
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{todonotes}
+\usepackage{float}
+\usepackage[colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black]{hyperref}
+
+\hypersetup{
+    pdftitle={Data Engineering II Mini Project --- Group 16},
+    pdfauthor={Group 16, Uppsala University}
+}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+% ------------------
+% Title block
+% ------------------
+\title{A Scalable GitHub Analytics System Using Apache Pulsar}
+
+\author{
+\IEEEauthorblockN{
+    Tejas Chakravarthy,
+    Andreas Hadjoullis,
+    Julios Fotiou,
+    Tanay Singh,
+    Adnan Erlangga Raharaja
+}
+\IEEEauthorblockA{
+    Uppsala University \\
+    1TD076 Data Engineering II, VT 2026, Group 16 \\
+    Source code: \url{https://github.com/tj-chakravarthy/Data-Engineering-II-Project-2}
+}
+}
+
+\maketitle
+
+
+\begin{IEEEkeywords}
+GitHub API, Apache Pulsar, stream processing, container orchestration, data analytics
+\end{IEEEkeywords}
+
+% ------------------
+\section{Abstract}
+% Write this last.
+% Briefly describe:
+% 1. the problem,
+% 2. the proposed system,
+% 3. the main technologies,
+% 4. the experiments,
+% 5. the main findings.
+% ------------------
+
+
+% ------------------
+\section{Introduction}
+% Motivation
+% Problem
+% Proposed solution
+% Contributions
+% ------------------
+
+% ------------------
+\section{Related Work}
+\label{sec:related-work}
+% Discuss related technologies and concepts:
+% 1. Stream processing frameworks:
+% 2. GitHub data collection:
+% 3. Containerization and orchestration:
+% Around 4--5 references.
+Cite example ~\cite{article-key}
+% ------------------
+
+% ------------------
+
+\section{System Architecture}
+\label{sec:architecture}
+
+\subsection{Overview}
+% Describe the full system pipeline Fig.~\ref{fig:architecture}.
+
+\begin{figure}[H]
+    \centering
+    Example architecture diagram: GitHub API $\rightarrow$ crawler
+    $\rightarrow$ Apache Pulsar topic $\rightarrow$ workers services $\rightarrow$ storage
+    $\rightarrow$ results.
+    \caption{System architecture overview.}
+    \label{fig:architecture}
+\end{figure}
+
+\subsection{Deployment and Automation}
+% Explain:
+% - Docker containers,
+% - 5-VM layout,
+% - head VM and worker VMs,
+% - cloud-init for VM setup,
+% - Docker Swarm or scripts for automated deployment,
+% - how services can be scaled without manually configuring each VM.
+% - etc.
+
+\subsection{Data Collection}
+% Explain:
+% - how repositories are collected from the GitHub API,
+% - how the last-year search criterion is handled,
+% - how pagination is handled,
+% - how the 1000-result search limit is handled,
+% - how rate limits are handled,
+% - how collected data is saved for repeatable experiments.
+% - etc.
+
+\subsection{Stream Processing with Apache Pulsar}
+% Explain:
+% - crawler acts as producer,
+% - repository records are published to a Pulsar topic,
+% - workers act as consumers
+% - etc.
+
+\subsection{Storage and Analytics}
+% Explain:
+% - where processed repository metadata is stored,
+% - how analytics are computed,
+% - how plots for Q1--Q4 are generated,
+% - how TOP_K is configurable.
+% - etc.
+
+% ------------------
+\section{Experiments and Results}
+\label{sec:experiments}
+
+\subsection{Experimental Setup}
+% Describe:
+% - hardware / VM setup,
+% - number of VMs,
+% - Docker deployment,
+% - dataset size,
+% - number of runs,
+% - metrics.
+%
+% Metrics can include:
+% - total processing time,
+% - throughput,
+% - number of processed repositories,
+% - speedup,
+% - correctness of Q1--Q4 analytics.
+
+\subsection{GitHub Analytics Results}
+% Present the required analytics:
+%
+% Q1. Top 10 programming languages by number of repositories.
+% Q2. Top 10 most frequently updated repositories.
+% Q3. Top 10 programming languages with unit tests.
+% Q4. Top 10 programming languages with both unit tests and CI.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/top_languages.pdf}
+    \caption{Top 10 programming languages by number of repositories.}
+    \label{fig:top-languages}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/top_commits.pdf}
+    \caption{Top 10 most frequently updated repositories.}
+    \label{fig:top-commits}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/top_test_languages.pdf}
+    \caption{Top 10 programming languages by number of repositories with unit tests.}
+    \label{fig:top-tests}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/top_test_ci_languages.pdf}
+    \caption{Top 10 programming languages by number of repositories with both unit tests and CI.}
+    \label{fig:top-tests-ci}
+\end{figure}
+
+\subsection{Experiment 1}
+\subsection{Experiment 2}
+...
+\subsection{Experiment ...}
+
+
+\subsection{Discussion}
+% Discuss:
+% - what worked well,
+% - what the main bottlenecks were,
+% - whether scaling was close to linear,
+% - whether partitioning helped,
+% - limitations caused by GitHub API rate limits,
+% - limitations of unit-test and CI detection heuristics.
+
+% ------------------
+% ------------------
+\section{Conclusion}
+\label{sec:conclusion}
+% ------------------
+% Summarize:
+% - what system was built,
+% - how Pulsar was used,
+% - what experiments were performed,
+% - what the main findings were,
+% - possible future work.
+
+% ------------------
+% References
+% ------------------
+\bibliographystyle{IEEEtran}
+\bibliography{main}
+
+\end{document}
