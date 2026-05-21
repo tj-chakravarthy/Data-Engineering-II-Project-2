@@ -24,4 +24,34 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
-      start_period: 40s
+      start_period: 60s
+
+  crawler:
+    image: andreashadjoullis1153/crawler:latest
+    command: python -m streaming.pulsar_producer --days 1
+    networks:
+      - pulsar-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+      restart_policy:
+        condition: on-failure
+    volumes:
+      - ./data:/app/data
+    env_file:
+      - .env
+
+  consumer:
+    image: andreashadjoullis1153/crawler:latest
+    command: python -m streaming.pulsar_toy_consumer
+    networks:
+      - pulsar-net
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == worker]
+      restart_policy:
+        condition: on-failure
+    env_file:
+      - .env
