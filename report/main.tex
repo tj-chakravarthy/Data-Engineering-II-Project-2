@@ -48,13 +48,8 @@
 
 \maketitle
 
-
-\begin{IEEEkeywords}
-GitHub API, Apache Pulsar, stream processing, container orchestration, data analytics
-\end{IEEEkeywords}
-
 % ------------------
-\section{Abstract}
+\begin{abstract}
 % Write this last.
 % Briefly describe:
 % 1. the problem,
@@ -63,7 +58,11 @@ GitHub API, Apache Pulsar, stream processing, container orchestration, data anal
 % 4. the experiments,
 % 5. the main findings.
 % ------------------
+\end{abstract}
 
+\begin{IEEEkeywords}
+GitHub API, Apache Pulsar, stream processing, container orchestration, data analytics
+\end{IEEEkeywords}
 
 % ------------------
 \section{Introduction}
@@ -71,6 +70,32 @@ GitHub API, Apache Pulsar, stream processing, container orchestration, data anal
 % Problem
 % Proposed solution
 % Contributions
+GitHub hosts a large number of open-source software projects and provides
+repository metadata through its REST API~\cite{github_rest_api}. This metadata can be useful for
+understanding software development trends, such as which programming languages
+are most common, which repositories are actively maintained, and how often
+projects use unit tests and continuous integration. However, these higher-level
+analytics are not directly available through GitHub search. Therefore, a data
+engineering pipeline is needed to collect, process, and analyze repository
+metadata at scale.
+
+This project develops a GitHub analytics system using Apache Pulsar as the
+streaming framework~\cite{apache_pulsar}. The system collects repository metadata from the GitHub
+API, publishes it to Pulsar topics, and processes it using worker services to
+produce the required analytics. The analytics component is designed to answer
+the project questions, including the most common programming languages, the
+most frequently updated repositories, the languages most associated with unit
+testing, and the languages most associated with both unit testing and
+continuous integration.
+The system also addresses practical data engineering challenges. GitHub search
+results are limited, so the crawler must divide the collection process into
+smaller queries and use pagination. API rate limits must also be considered
+when collecting repository metadata. To make the system reproducible and easier
+to deploy, the implementation uses Docker containers and automation scripts.
+The main contribution of this work is the design of a cloud-based and scalable
+GitHub analytics pipeline using suitable data engineering frameworks. Apache
+Pulsar is used as the streaming layer, while containerization and automation
+support deployment across multiple virtual machines.
 % ------------------
 
 % ------------------
@@ -81,7 +106,6 @@ GitHub API, Apache Pulsar, stream processing, container orchestration, data anal
 % 2. GitHub data collection:
 % 3. Containerization and orchestration:
 % Around 4--5 references.
-Cite example ~\cite{article-key}
 % ------------------
 
 % ------------------
