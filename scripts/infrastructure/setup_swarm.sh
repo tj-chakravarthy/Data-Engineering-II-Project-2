@@ -48,6 +48,32 @@ wait_for_service_replicas() {
     exit 1
 }
 
+wait_for_service_running_or_completed() {
+    local service=$1
+    local expected=$2
+    echo "Waiting for service '$service' to run or complete successfully..."
+    for attempt in $(seq 1 60); do
+        running=$(docker service ls --filter "name=${service}" --format '{{.Replicas}}' 2>/dev/null | head -1)
+        if [ "$running" = "${expected}/${expected}" ]; then
+            echo "  $service is running ($running)."
+            return 0
+        fi
+
+        completed=$(docker service ps "$service" --no-trunc --format '{{.CurrentState}}' 2>/dev/null | grep -c '^Complete ' || true)
+        if [ "$completed" -ge "$expected" ]; then
+            echo "  $service completed successfully."
+            return 0
+        fi
+
+        echo "  Attempt $attempt/60: replicas=$running completed_tasks=$completed - retrying in 10s..."
+        sleep 10
+    done
+    echo "ERROR: service '$service' did not run or complete successfully in time."
+    docker service ps "$service" --no-trunc || true
+    docker service logs "$service" --tail 30 || true
+    exit 1
+}
+
 # -------------------------------------------------------------------
 # 1. Wait for all workers
 # -------------------------------------------------------------------
@@ -66,9 +92,21 @@ for worker in $WORKERS; do
 done
 echo "  Done."
 
-# The crawler keeps cache/checkpoint files under /app/data, so create the
-# bind-mount source on the manager before Swarm starts the service.
-mkdir -p "${REMOTE_REPO_DIR}/data/cache" "${REMOTE_REPO_DIR}/data/output"
+# The crawler and analytics services keep cache/checkpoint/result files under
+# /app/data, so create the bind-mount source on every possible service node
+# before Swarm starts containers.
+mkdir -p \
+    "${REMOTE_REPO_DIR}/data/cache" \
+    "${REMOTE_REPO_DIR}/data/output" \
+    "${REMOTE_REPO_DIR}/data/results" \
+    "${REMOTE_REPO_DIR}/data/figures"
+for worker in $WORKERS; do
+    ssh "$worker" "mkdir -p \
+        ${REMOTE_REPO_DIR}/data/cache \
+        ${REMOTE_REPO_DIR}/data/output \
+        ${REMOTE_REPO_DIR}/data/results \
+        ${REMOTE_REPO_DIR}/data/figures"
+done
 
 # -------------------------------------------------------------------
 # 3. Init Docker Swarm on master
@@ -104,7 +142,7 @@ echo "Deploying pulsar stack..."
 )
 
 wait_for_service_replicas "pulsar_pulsar" 1
-wait_for_service_replicas "pulsar_crawler" 1
+wait_for_service_running_or_completed "pulsar_crawler" 1
 wait_for_service_replicas "pulsar_analytics" 1
 
 # -------------------------------------------------------------------
