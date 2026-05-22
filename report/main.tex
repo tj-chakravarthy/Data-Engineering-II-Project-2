@@ -1,9 +1,6 @@
 \documentclass[conference]{IEEEtran}
 \IEEEoverridecommandlockouts
 
-% ------------------
-% Packages
-% ------------------
 \usepackage{cite}
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{graphicx}
@@ -12,9 +9,9 @@
 \usepackage{textcomp}
 \usepackage{xcolor}
 \usepackage{url}
-\usepackage{todonotes}
 \usepackage{float}
 \usepackage[colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black]{hyperref}
+
 
 \hypersetup{
     pdftitle={Data Engineering II Mini Project --- Group 16},
@@ -26,9 +23,6 @@
 
 \begin{document}
 
-% ------------------
-% Title block
-% ------------------
 \title{A Scalable GitHub Analytics System Using Apache Pulsar}
 
 \author{
@@ -48,7 +42,6 @@
 
 \maketitle
 
-% ------------------
 \begin{abstract}
 % Write this last.
 % Briefly describe:
@@ -57,19 +50,14 @@
 % 3. the main technologies,
 % 4. the experiments,
 % 5. the main findings.
-% ------------------
+
 \end{abstract}
 
 \begin{IEEEkeywords}
 GitHub API, Apache Pulsar, stream processing, container orchestration, data analytics
 \end{IEEEkeywords}
 
-% ------------------
 \section{Introduction}
-% Motivation
-% Problem
-% Proposed solution
-% Contributions
 GitHub hosts a large number of open-source software projects and provides
 repository metadata through its REST API~\cite{github_rest_api}. This metadata can be useful for
 understanding software development trends, such as which programming languages
@@ -96,19 +84,33 @@ The main contribution of this work is the design of a cloud-based and scalable
 GitHub analytics pipeline using suitable data engineering frameworks. Apache
 Pulsar is used as the streaming layer, while containerization and automation
 support deployment across multiple virtual machines.
-% ------------------
 
-% ------------------
 \section{Related Work}
 \label{sec:related-work}
-% Discuss related technologies and concepts:
-% 1. Stream processing frameworks:
-% 2. GitHub data collection:
-% 3. Containerization and orchestration:
-% Around 4--5 references.
-% ------------------
+GitHub is widely used as a data source in empirical software engineering and
+mining software repository research. Kalliamvakou et al. show that GitHub
+metadata can provide useful information about software development activity, but
+also emphasize that such data must be interpreted
+carefully~\cite{kalliamvakou2014promises}. This is relevant to the present
+project because repository metadata is used to derive analytics about
+programming languages, update activity, unit testing, and continuous
+integration.
 
-% ------------------
+Stream processing systems are useful when data should be processed
+incrementally rather than only after a complete dataset has been collected.
+Blamey et al. compare stream-processing systems using throughput-oriented
+benchmarks under different processing loads~\cite{blamey2019apache}. In this
+project, Apache Pulsar is used as the streaming layer, following a
+producer--topic--consumer model where repository records are published as
+messages and processed by worker services~\cite{apache_pulsar}.
+
+Cloud deployment and automation are also relevant because the system is
+intended to run across multiple virtual machines. Armstrong et al. discuss
+cloud contextualization as a way to configure virtual machines during
+deployment~\cite{armstrong2015contextualization}. In this project,
+containerization and automation are used to make the pipeline more reproducible
+and easier to deploy across cloud resources.
+
 
 \section{System Architecture}
 \label{sec:architecture}
@@ -116,7 +118,7 @@ support deployment across multiple virtual machines.
 \subsection{Overview}
 % Describe the full system pipeline Fig.~\ref{fig:architecture}.
 
-\begin{figure}[H]
+\begin{figure}[!t]
     \centering
     Example architecture diagram: GitHub API $\rightarrow$ crawler
     $\rightarrow$ Apache Pulsar topic $\rightarrow$ workers services $\rightarrow$ storage
@@ -160,7 +162,6 @@ support deployment across multiple virtual machines.
 % - how TOP_K is configurable.
 % - etc.
 
-% ------------------
 \section{Experiments and Results}
 \label{sec:experiments}
 
@@ -188,33 +189,33 @@ support deployment across multiple virtual machines.
 % Q3. Top 10 programming languages with unit tests.
 % Q4. Top 10 programming languages with both unit tests and CI.
 
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\linewidth]{figures/top_languages.pdf}
-    \caption{Top 10 programming languages by number of repositories.}
-    \label{fig:top-languages}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\linewidth]{figures/top_commits.pdf}
-    \caption{Top 10 most frequently updated repositories.}
-    \label{fig:top-commits}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\linewidth]{figures/top_test_languages.pdf}
-    \caption{Top 10 programming languages by number of repositories with unit tests.}
-    \label{fig:top-tests}
-\end{figure}
-
-\begin{figure}[H]
-    \centering
-    \includegraphics[width=\linewidth]{figures/top_test_ci_languages.pdf}
-    \caption{Top 10 programming languages by number of repositories with both unit tests and CI.}
-    \label{fig:top-tests-ci}
-\end{figure}
+%\begin{figure}[!t]
+%    \centering
+%    \includegraphics[width=\linewidth]{figures/top_languages.pdf}
+%    \caption{Top 10 programming languages by number of repositories.}
+%    \label{fig:top-languages}
+%\end{figure}
+%
+%\begin{figure}[!t]
+%    \centering
+%    \includegraphics[width=\linewidth]{figures/top_commits.pdf}
+%    \caption{Top 10 most frequently updated repositories.}
+%    \label{fig:top-commits}
+%\end{figure}
+%
+%\begin{figure}[!t]
+%    \centering
+%    \includegraphics[width=\linewidth]{figures/top_test_languages.pdf}
+%    \caption{Top 10 programming languages by number of repositories with unit tests.}
+%    \label{fig:top-tests}
+%\end{figure}
+%
+%\begin{figure}[!t]
+%    \centering
+%    \includegraphics[width=\linewidth]{figures/top_test_ci_languages.pdf}
+%    \caption{Top 10 programming languages by number of repositories with both unit tests and CI.}
+%    \label{fig:top-tests-ci}
+%\end{figure}
 
 \subsection{Experiment 1}
 \subsection{Experiment 2}
@@ -231,11 +232,8 @@ support deployment across multiple virtual machines.
 % - limitations caused by GitHub API rate limits,
 % - limitations of unit-test and CI detection heuristics.
 
-% ------------------
-% ------------------
 \section{Conclusion}
 \label{sec:conclusion}
-% ------------------
 % Summarize:
 % - what system was built,
 % - how Pulsar was used,
@@ -243,9 +241,7 @@ support deployment across multiple virtual machines.
 % - what the main findings were,
 % - possible future work.
 
-% ------------------
 % References
-% ------------------
 \bibliographystyle{IEEEtran}
 \bibliography{main}
 
