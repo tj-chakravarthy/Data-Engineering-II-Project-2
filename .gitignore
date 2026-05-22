@@ -22,5 +22,6 @@ data/output/
 
 # Local tool / editor state
 .claude/
+CLAUDE.md
 .vscode/
 .idea/
