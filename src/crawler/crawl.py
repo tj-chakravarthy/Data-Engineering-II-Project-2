@@ -443,7 +443,12 @@ def _sample_memory(
 def load_dotenv(path: Path = Path(".env")) -> None:
     """Tiny `.env` loader so local runs do not need an extra dependency."""
     if not path.exists():
-        return
+        if path != Path(".env"):
+            return
+        infra_path = Path("scripts/infrastructure/.env")
+        if not infra_path.exists():
+            return
+        path = infra_path
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:

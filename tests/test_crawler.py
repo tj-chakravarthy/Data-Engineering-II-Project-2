@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from datetime import date, datetime, timezone
@@ -15,6 +16,7 @@ from crawler.crawl import (
     crawl_window,
     date_fields_for_mode,
     date_slices,
+    load_dotenv,
 )
 from crawler.github_client import SearchMetadata
 from crawler.models import RepoRecord
@@ -303,6 +305,32 @@ class CrawlerTests(unittest.TestCase):
         self.assertEqual(len(queries), 1)
         self.assertEqual(stats.search_cap_warnings, 1)
         self.assertEqual(stats.incomplete_search_warnings, 1)
+
+    def test_load_dotenv_falls_back_to_infrastructure_env(self) -> None:
+        key = "CRAWLER_TEST_DOTENV_VALUE"
+        previous = os.environ.pop(key, None)
+        original_cwd = Path.cwd()
+        tmp_dir = tempfile.TemporaryDirectory()
+
+        try:
+            os.chdir(tmp_dir.name)
+            infra_dir = Path("scripts/infrastructure")
+            infra_dir.mkdir(parents=True)
+            (infra_dir / ".env").write_text(
+                f"{key}=from_infra_env\n",
+                encoding="utf-8",
+            )
+
+            load_dotenv()
+
+            self.assertEqual(os.environ.get(key), "from_infra_env")
+        finally:
+            os.chdir(original_cwd)
+            tmp_dir.cleanup()
+            if previous is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = previous
 
 
 def _record(repo_id: int, full_name: str) -> RepoRecord:
