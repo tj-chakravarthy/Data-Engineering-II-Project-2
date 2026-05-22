@@ -10,20 +10,22 @@ import json
 import logging
 
 from analytics.common import AnalyticsState, config, enrich_repo
+from crawler.crawl import load_dotenv
+from crawler.github_client import GitHubClient
+from streaming.pulsar_connection import get_pulsar_client
 
 log = logging.getLogger(__name__)
 
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    load_dotenv()
     cfg = config()
 
-    try:
-        import pulsar
-    except ImportError as exc:
-        raise RuntimeError("Install pulsar-client with `pip install -r requirements.txt`.") from exc
+    # Built only when enrichment is on: GitHubClient raises if no tokens exist.
+    github_client = GitHubClient() if cfg["enrich_github"] else None
 
-    client = pulsar.Client(cfg["broker_url"])
+    client = get_pulsar_client(cfg["broker_url"], probe_topic=cfg["commits_topic"])
     consumer = client.subscribe(cfg["raw_topic"], cfg["subscription"])
     commits_producer = client.create_producer(cfg["commits_topic"])
     tests_producer = client.create_producer(cfg["tests_topic"])
@@ -47,7 +49,7 @@ def main() -> None:
             try:
                 repo = json.loads(message.data().decode("utf-8"))
                 total_received += 1
-                enrichment = enrich_repo(repo) if cfg["enrich_github"] else None
+                enrichment = enrich_repo(github_client, repo) if github_client else None
 
                 is_new = state.add_repo(repo, enrichment)
                 if is_new:

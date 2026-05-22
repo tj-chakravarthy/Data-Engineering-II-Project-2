@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 
-GITHUB_API = "https://api.github.com"
+from crawler.github_client import GitHubClient
 
 TEST_PATHS = ["tests", "test", "spec", "__tests__", "pytest.ini", "package.json", "pom.xml", "Cargo.toml"]
 CI_PATHS = [".github/workflows", ".gitlab-ci.yml", ".travis.yml", "Jenkinsfile", ".circleci/config.yml"]
@@ -91,13 +91,13 @@ class AnalyticsState:
         })
 
 
-def enrich_repo(repo: dict) -> dict:
+def enrich_repo(client: GitHubClient, repo: dict) -> dict:
     full_name = repo["full_name"]
     branch = repo.get("default_branch")
-    has_tests, test_evidence = path_matches(full_name, TEST_PATHS, branch, check_test_file=True)
-    has_ci, ci_evidence = path_matches(full_name, CI_PATHS, branch)
+    has_tests, test_evidence = path_matches(client, full_name, TEST_PATHS, branch, check_test_file=True)
+    has_ci, ci_evidence = path_matches(client, full_name, CI_PATHS, branch)
     return {
-        "commit_count": commit_count(full_name),
+        "commit_count": commit_count(client, full_name),
         "has_tests": has_tests,
         "test_evidence": test_evidence,
         "has_ci": has_ci,
@@ -105,12 +105,13 @@ def enrich_repo(repo: dict) -> dict:
     }
 
 
-def commit_count(full_name: str) -> int | None:
-    response = github_get(f"/repos/{full_name}/commits", {"per_page": 1})
-    if response.status_code == 409:
-        return 0
-    if response.status_code != 200:
-        return None
+def commit_count(client: GitHubClient, full_name: str) -> int | None:
+    try:
+        response = client.get(f"/repos/{full_name}/commits", {"per_page": 1})
+    except requests.HTTPError as exc:
+        # 409 = empty repository (no commits); anything else = unknown.
+        status = exc.response.status_code if exc.response is not None else None
+        return 0 if status == 409 else None
     last = last_page(response.headers.get("Link", ""))
     if last is not None:
         return last
@@ -121,10 +122,12 @@ def commit_count(full_name: str) -> int | None:
     return len(payload) if isinstance(payload, list) else None
 
 
-def path_matches(full_name: str, paths: list[str], branch: str | None, check_test_file: bool = False) -> tuple[bool, str | None]:
+def path_matches(client: GitHubClient, full_name: str, paths: list[str], branch: str | None, check_test_file: bool = False) -> tuple[bool, str | None]:
     for path in paths:
-        response = github_get(f"/repos/{full_name}/contents/{path}", {"ref": branch} if branch else None)
-        if response.status_code != 200:
+        try:
+            response = client.get(f"/repos/{full_name}/contents/{path}", {"ref": branch} if branch else None)
+        except requests.HTTPError:
+            # 404 = path absent (the common case); try the next path.
             continue
         if not check_test_file or path in {"tests", "test", "spec", "__tests__"}:
             return True, path
@@ -132,17 +135,6 @@ def path_matches(full_name: str, paths: list[str], branch: str | None, check_tes
         if any(word in text.lower() for word in TEST_WORDS):
             return True, path
     return False, None
-
-
-def github_get(path: str, params: dict | None = None) -> requests.Response:
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    token = os.getenv("GITHUB_TOKEN")
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    return requests.get(GITHUB_API + path, headers=headers, params=params, timeout=20)
 
 
 def decode_github_file(response: requests.Response) -> str:
