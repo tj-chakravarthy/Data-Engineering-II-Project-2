@@ -30,8 +30,8 @@ def get_pulsar_client(
         import pulsar
     except ImportError as exc:
         raise RuntimeError(
-            "Missing Pulsar Python client. Install dependencies with "
-            "`pip install -r requirements.txt`."
+            "Missing Pulsar Python client. Install it with "
+            "`pip install pulsar-client`."
         ) from exc
 
     for attempt in range(1, retries + 1):

@@ -20,12 +20,10 @@ git clone https://github.com/tj-chakravarthy/Data-Engineering-II-Project-2.git
 cd Data-Engineering-II-Project-2
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# Edit .env and put your GitHub token in GITHUB_TOKEN_1.
+pip install requests pulsar-client
 ```
 
-You can drop additional tokens in as `GITHUB_TOKEN_2`, `GITHUB_TOKEN_3`, up to `GITHUB_TOKEN_5`. Anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
+Runtime config lives in `scripts/infrastructure/.env`, tracked in the repo; `scripts/infrastructure/.env.example` lists every field. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5` — anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
 
 ## Running the crawler
 

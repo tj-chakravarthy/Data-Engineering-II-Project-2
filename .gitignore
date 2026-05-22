@@ -20,6 +20,11 @@ id_ed25519.pub
 data/cache/
 data/output/
 
+# Infrastructure runtime artifacts
+scripts/infrastructure/*.ignore
+scripts/infrastructure/*.tar.gz
+scripts/infrastructure/*info.txt
+
 # Local tool / editor state
 .claude/
 CLAUDE.md
