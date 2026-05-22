@@ -62,16 +62,14 @@ def main() -> None:
                 repo = json.loads(message.data().decode("utf-8"))
                 total_received += 1
 
-                # Skip already-counted repos before enriching: enrich_repo makes
-                # many GitHub calls, and duplicates (producer retries, redelivery)
-                # would otherwise burn rate-limit budget on work add_repo discards.
-                if int(repo["repo_id"]) not in state.seen:
-                    enrichment = enrich_repo(github_client, repo) if github_client else None
-                    if state.add_repo(repo, enrichment):
-                        enrichment = enrichment or {}
-                        send_json(commits_producer, {**repo, "commit_count": enrichment.get("commit_count")})
-                        send_json(tests_producer, {**repo, "has_tests": enrichment.get("has_tests", False)})
-                        send_json(ci_producer, {**repo, "has_ci": enrichment.get("has_ci", False)})
+                process_repo(
+                    repo,
+                    state,
+                    github_client,
+                    commits_producer,
+                    tests_producer,
+                    ci_producer,
+                )
             except Exception:
                 log.exception("failed to process message; negative acking")
                 consumer.negative_acknowledge(message)
@@ -102,6 +100,31 @@ def main() -> None:
 def save_and_publish(state: AnalyticsState, cfg: dict, aggregate_producer) -> None:
     state.save(cfg["results_dir"], cfg["state_path"], cfg["top_n"])
     send_json(aggregate_producer, state.results(cfg["top_n"]))
+
+
+def process_repo(
+    repo: dict,
+    state: AnalyticsState,
+    github_client: GitHubClient | None,
+    commits_producer,
+    tests_producer,
+    ci_producer,
+) -> bool:
+    # Skip already-counted repos before enriching: enrich_repo makes many
+    # GitHub calls, and duplicates would otherwise burn rate-limit budget.
+    if int(repo["repo_id"]) in state.seen:
+        return False
+
+    enrichment = enrich_repo(github_client, repo) if github_client else {}
+
+    # Publish derived records before mutating state. If any send raises, the
+    # raw message is negative-acked and redelivered; state.seen must not cause
+    # the retry to skip derived topics that did not publish yet.
+    send_json(commits_producer, {**repo, "commit_count": enrichment.get("commit_count")})
+    send_json(tests_producer, {**repo, "has_tests": enrichment.get("has_tests", False)})
+    send_json(ci_producer, {**repo, "has_ci": enrichment.get("has_ci", False)})
+
+    return state.add_repo(repo, enrichment)
 
 
 def send_json(producer, payload: dict) -> None:

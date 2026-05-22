@@ -7,6 +7,7 @@ REPO_ARCHIVE="repo.tar.gz"
 REMOTE_REPO_DIR="/home/ubuntu/app"
 TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure/"
 LOCAL_REPO_ROOT="$(git rev-parse --show-toplevel)"
+LOCAL_ENV_FILE="${LOCAL_REPO_ROOT}/scripts/infrastructure/.env"
 
 if [[ $# -ne 2 || $1 == "--help" ]]; then
     echo "Usage: ./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH>"
@@ -15,6 +16,11 @@ fi
 
 PUBLIC_KEY_NAME="$1"
 PRIVATE_KEY_PATH="$2"
+
+if [ ! -f "$LOCAL_ENV_FILE" ]; then
+    echo "ERROR: missing runtime config at $LOCAL_ENV_FILE"
+    exit 1
+fi
 
 echo "Sourcing 'UPPMAX-openrc.sh.ignore'..."
 source UPPMAX-openrc.sh.ignore
@@ -66,6 +72,12 @@ ssh -i "$PRIVATE_KEY_PATH" \
     "ubuntu@${MASTER_IP}" \
     "mkdir -p ${REMOTE_REPO_DIR} && tar -xzf /home/ubuntu/${REPO_ARCHIVE} -C ${REMOTE_REPO_DIR} && rm /home/ubuntu/${REPO_ARCHIVE}"
 echo "  Unpacked to ${REMOTE_REPO_DIR}"
+
+echo "Copying current runtime .env to master..."
+scp -i "$PRIVATE_KEY_PATH" \
+    -o StrictHostKeyChecking=accept-new \
+    "$LOCAL_ENV_FILE" "ubuntu@${MASTER_IP}:${TARGET_PATH}/.env"
+echo "  Copied ${LOCAL_ENV_FILE}"
 
 # Clean up local archive
 rm -f "$REPO_ARCHIVE"

@@ -6,6 +6,7 @@ from collections import Counter
 from pathlib import Path
 
 from analytics.common import AnalyticsState, last_page, top_counter, top_dict
+from analytics.runner import process_repo
 
 
 def _repo(repo_id: int, language: str | None = "Python", full_name: str | None = None) -> dict:
@@ -14,6 +15,17 @@ def _repo(repo_id: int, language: str | None = "Python", full_name: str | None =
         "language": language,
         "full_name": full_name or f"owner/repo{repo_id}",
     }
+
+
+class FakeProducer:
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.messages: list[bytes] = []
+
+    def send(self, payload: bytes) -> None:
+        if self.fail:
+            raise RuntimeError("simulated publish failure")
+        self.messages.append(payload)
 
 
 class AnalyticsStateTests(unittest.TestCase):
@@ -120,6 +132,24 @@ class AnalyticsStateTests(unittest.TestCase):
         # A corrupt state file must degrade to a fresh start, not crash.
         self.assertEqual(restored.seen, set())
         self.assertEqual(restored.results(10)["processed_unique_repositories"], 0)
+
+    def test_process_repo_does_not_mark_seen_when_derived_publish_fails(self) -> None:
+        state = AnalyticsState()
+        commits = FakeProducer()
+        tests = FakeProducer(fail=True)
+        ci = FakeProducer()
+        repo = _repo(1, "Python")
+
+        with self.assertRaises(RuntimeError):
+            process_repo(repo, state, None, commits, tests, ci)
+
+        self.assertEqual(state.seen, set())
+        self.assertEqual(len(commits.messages), 1)
+        self.assertEqual(len(ci.messages), 0)
+
+        tests.fail = False
+        self.assertTrue(process_repo(repo, state, None, commits, tests, ci))
+        self.assertEqual(state.seen, {1})
 
 
 class HelperTests(unittest.TestCase):
