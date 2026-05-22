@@ -33,7 +33,8 @@ if [ ! -d "$VENV_DIR" ]; then
     "$VENV_DIR/bin/pip" install \
         python-openstackclient \
         python-novaclient \
-        python-keystoneclient
+        python-keystoneclient \
+        python-neutronclient
 fi
 
 # --- Provision master ---

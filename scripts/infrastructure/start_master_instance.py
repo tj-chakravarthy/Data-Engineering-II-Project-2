@@ -5,6 +5,7 @@ import subprocess
 import time, os, sys
 from os import environ as env
 from novaclient import client
+from neutronclient.v2_0 import client as neutron_client
 from keystoneauth1 import loading, session
 
 # PUBLIC_KEY_NAME: name of public key used found on SSC
@@ -70,8 +71,27 @@ while True:
     print(f"  Status: {instance.status}, waiting 5s...")
     time.sleep(5)
 
-# --- Attach manually floating IP ---
-FLOATING_IP = input("Provide assigned floating IP: ")
+# --- Allocate and attach floating IP via Neutron API ---
+neutron = neutron_client.Client(session=sess)
+
+ext_nets = neutron.list_networks(**{'router:external': True})
+if not ext_nets['networks']:
+    sys.exit("ERROR: no external network found in this OpenStack project.")
+ext_net = ext_nets['networks'][0]
+print(f"Using external network: {ext_net['name']} ({ext_net['id']})")
+
+fip_resp = neutron.create_floatingip({'floatingip': {'floating_network_id': ext_net['id']}})
+fip = fip_resp['floatingip']
+FLOATING_IP = fip['floating_ip_address']
+print(f"Allocated floating IP: {FLOATING_IP}")
+
+ports = neutron.list_ports(device_id=instance.id)
+if not ports['ports']:
+    sys.exit(f"ERROR: no ports found for instance {instance.id}.")
+port_id = ports['ports'][0]['id']
+
+neutron.update_floatingip(fip['id'], {'floatingip': {'port_id': port_id}})
+print(f"Floating IP {FLOATING_IP} associated with instance {INSTANCE_NAME}.")
 
 # --- Wait for SSH to be ready ---
 print("Waiting for SSH to become available...")
