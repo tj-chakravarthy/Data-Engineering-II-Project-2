@@ -61,13 +61,17 @@ def main() -> None:
             try:
                 repo = json.loads(message.data().decode("utf-8"))
                 total_received += 1
-                enrichment = enrich_repo(github_client, repo) if github_client else None
 
-                if state.add_repo(repo, enrichment):
-                    enrichment = enrichment or {}
-                    send_json(commits_producer, {**repo, "commit_count": enrichment.get("commit_count")})
-                    send_json(tests_producer, {**repo, "has_tests": enrichment.get("has_tests", False)})
-                    send_json(ci_producer, {**repo, "has_ci": enrichment.get("has_ci", False)})
+                # Skip already-counted repos before enriching: enrich_repo makes
+                # many GitHub calls, and duplicates (producer retries, redelivery)
+                # would otherwise burn rate-limit budget on work add_repo discards.
+                if int(repo["repo_id"]) not in state.seen:
+                    enrichment = enrich_repo(github_client, repo) if github_client else None
+                    if state.add_repo(repo, enrichment):
+                        enrichment = enrichment or {}
+                        send_json(commits_producer, {**repo, "commit_count": enrichment.get("commit_count")})
+                        send_json(tests_producer, {**repo, "has_tests": enrichment.get("has_tests", False)})
+                        send_json(ci_producer, {**repo, "has_ci": enrichment.get("has_ci", False)})
             except Exception:
                 log.exception("failed to process message; negative acking")
                 consumer.negative_acknowledge(message)
