@@ -26,6 +26,7 @@ data/.matplotlib/
 scripts/infrastructure/*.ignore
 scripts/infrastructure/*.tar.gz
 scripts/infrastructure/*info.txt
+UPPMAX*.sh
 
 # Local tool / editor state
 .claude/
