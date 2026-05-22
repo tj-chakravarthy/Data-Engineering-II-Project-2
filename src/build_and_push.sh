@@ -1,11 +1,16 @@
 #!/bin/bash
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# If $1 is provided, use it. Otherwise, default to 'latest'.
+TAG=${1:-latest}
 
-# fixed by TJ: build from the repo root so src/Dockerfile can copy
-# requirements.txt instead of duplicating dependency versions.
-docker build -f "${REPO_ROOT}/src/Dockerfile" -t andreashadjoullis1153/crawler:latest "${REPO_ROOT}"
+echo "Building image with tag: $TAG..."
+docker build -t "andreashadjoullis1153/crawler:$TAG" .
+
+echo "Logging into Docker Hub..."
 docker login
-docker push andreashadjoullis1153/crawler:latest
+
+echo "Pushing image to registry..."
+docker push "andreashadjoullis1153/crawler:$TAG"
+
+echo "Done! Successfully built and pushed andreashadjoullis1153/crawler:$TAG"

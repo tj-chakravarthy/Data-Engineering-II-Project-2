@@ -7,6 +7,7 @@ set -e
 WORKERS="w1 w2 w3 w4"
 REMOTE_REPO_DIR="/home/ubuntu/app"
 TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure"
+ENV_FILE="${TARGET_PATH}/.env"
 STACK_FILE="${TARGET_PATH}/cluster-stack.yml"
 MAX_ATTEMPTS=30
 
@@ -79,8 +80,8 @@ for worker in $WORKERS; do
 done
 echo "  Done."
 
-# fixed by TJ: the crawler keeps cache/checkpoint files under /app/data, so
-# create the bind-mount source on the manager before Swarm starts the service.
+# The crawler keeps cache/checkpoint files under /app/data, so create the
+# bind-mount source on the manager before Swarm starts the service.
 mkdir -p "${REMOTE_REPO_DIR}/data/cache" "${REMOTE_REPO_DIR}/data/output"
 
 # -------------------------------------------------------------------
@@ -109,27 +110,12 @@ echo "Creating '/home/ubuntu/data' directory..."
 mkdir -p /home/ubuntu/data
 echo "  Done"
 echo "Deploying pulsar stack..."
-if [ ! -f "${REMOTE_REPO_DIR}/.env" ]; then
-    echo "ERROR: missing ${REMOTE_REPO_DIR}/.env"
-    exit 1
-fi
-
-# fixed by TJ: source .env here so docker stack deploy expands crawler and
-# consumer environment values without relying on unsupported env_file behavior.
-set -a
-source "${REMOTE_REPO_DIR}/.env"
-set +a
-
-# fixed by TJ: build the crawler image as part of setup so the professor does
-# not need to remember a separate docker build/push step before deploying.
-build_crawler_image local
-for worker in $WORKERS; do
-    build_crawler_image "$worker"
-done
-
-# fixed by TJ: images are built locally on each VM above, so don't let Swarm
-# resolve this tag against Docker Hub and accidentally run an older push.
-docker stack deploy --resolve-image never --detach=true -c "$STACK_FILE" pulsar
+(
+    # apply side-effect only within subshell
+    export $(grep -v '^#' "$ENV_FILE" | xargs)
+    export PULSAR_SERVICE_URL="pulsar://$MASTER_IP:6650"
+    docker stack deploy --detach=true -c "$STACK_FILE" pulsar
+)
 
 wait_for_service_replicas "pulsar_pulsar" 1
 
