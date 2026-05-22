@@ -144,6 +144,7 @@ echo "Creating '/home/ubuntu/data' directory..."
 mkdir -p /home/ubuntu/data
 echo "  Done"
 echo "Deploying pulsar stack..."
+DEPLOY_STARTED_AT=$(date +%s)
 (
     # apply side-effect only within subshell
     export $(grep -v '^#' "$ENV_FILE" | xargs)
@@ -154,7 +155,7 @@ echo "Deploying pulsar stack..."
 wait_for_service_replicas "pulsar_pulsar" 1
 wait_for_service_running_or_completed "pulsar_crawler" 1
 wait_for_service_replicas "pulsar_analytics" 1
-bash "${TARGET_PATH}/verify_swarm_pipeline.sh"
+DEPLOY_STARTED_AT="$DEPLOY_STARTED_AT" bash "${TARGET_PATH}/verify_swarm_pipeline.sh"
 
 # -------------------------------------------------------------------
 # 6. Summary

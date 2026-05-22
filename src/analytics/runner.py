@@ -37,12 +37,15 @@ def main() -> None:
     state = AnalyticsState.load(cfg["state_path"])
     total_received = 0
     pending: list = []
+    saved_once = False
 
     def flush() -> None:
+        nonlocal saved_once
         # Persist state, then ack. A message is acked only once its work is
         # durable, so a crash redelivers it instead of dropping it; add_repo
         # dedupes any redelivered message via state.seen.
         save_and_publish(state, cfg, aggregate_producer)
+        saved_once = True
         for processed in pending:
             consumer.acknowledge(processed)
         pending.clear()
@@ -62,7 +65,7 @@ def main() -> None:
                 repo = json.loads(message.data().decode("utf-8"))
                 total_received += 1
 
-                process_repo(
+                is_new = process_repo(
                     repo,
                     state,
                     github_client,
@@ -77,7 +80,7 @@ def main() -> None:
 
             pending.append(message)
 
-            if len(pending) >= cfg["flush_every"]:
+            if (is_new and not saved_once) or len(pending) >= cfg["flush_every"]:
                 flush()
                 log.info(
                     "processed %d received messages, %d unique repos",

@@ -11,13 +11,17 @@ SMOKE_ATTEMPTS=${SMOKE_ATTEMPTS:-30}
 SMOKE_DELAY_SECONDS=${SMOKE_DELAY_SECONDS:-10}
 SMOKE_MIN_RAW_MESSAGES=${SMOKE_MIN_RAW_MESSAGES:-1}
 ANALYTICS_SSH_HOST=${ANALYTICS_SSH_HOST:-w1}
+DEPLOY_STARTED_AT=${DEPLOY_STARTED_AT:-0}
 
-if [ -f "$ENV_FILE" ]; then
-    set -a
-    source "$ENV_FILE"
-    set +a
-fi
+env_value() {
+    local key=$1
+    if [ ! -f "$ENV_FILE" ]; then
+        return 0
+    fi
+    grep -E "^${key}=" "$ENV_FILE" | tail -1 | cut -d'=' -f2-
+}
 
+PULSAR_TOPIC=${PULSAR_TOPIC:-$(env_value PULSAR_TOPIC)}
 PULSAR_TOPIC=${PULSAR_TOPIC:-repos.raw}
 
 topic_path() {
@@ -82,15 +86,15 @@ wait_for_analytics_results() {
     local host=$1
     echo "Smoke check: waiting for analytics results on ${host}:${RESULTS_DIR}..."
     for attempt in $(seq 1 "$SMOKE_ATTEMPTS"); do
-        if ssh "$host" "test -s '${RESULTS_DIR}/all_results.json'"; then
+        if ssh "$host" "test -s '${RESULTS_DIR}/all_results.json' && [ \$(stat -c %Y '${RESULTS_DIR}/all_results.json') -ge ${DEPLOY_STARTED_AT} ]"; then
             echo "  Analytics results exist:"
             ssh "$host" "ls -lh '${RESULTS_DIR}'"
             return 0
         fi
-        echo "  Attempt $attempt/$SMOKE_ATTEMPTS: all_results.json not ready; retrying in ${SMOKE_DELAY_SECONDS}s..."
+        echo "  Attempt $attempt/$SMOKE_ATTEMPTS: current-run all_results.json not ready; retrying in ${SMOKE_DELAY_SECONDS}s..."
         sleep "$SMOKE_DELAY_SECONDS"
     done
-    echo "ERROR: analytics did not produce ${RESULTS_DIR}/all_results.json."
+    echo "ERROR: analytics did not produce a current-run ${RESULTS_DIR}/all_results.json."
     print_debug_logs
     exit 1
 }
