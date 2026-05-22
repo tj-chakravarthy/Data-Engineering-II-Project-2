@@ -104,6 +104,8 @@ echo "Deploying pulsar stack..."
 )
 
 wait_for_service_replicas "pulsar_pulsar" 1
+wait_for_service_replicas "pulsar_crawler" 1
+wait_for_service_replicas "pulsar_analytics" 1
 
 # -------------------------------------------------------------------
 # 6. Summary
