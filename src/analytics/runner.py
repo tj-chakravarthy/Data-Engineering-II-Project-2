@@ -32,15 +32,27 @@ def main() -> None:
     ci_producer = client.create_producer(cfg["ci_topic"])
     aggregate_producer = client.create_producer(cfg["aggregate_topic"])
 
-    state = AnalyticsState()
-    processed_since_flush = 0
+    # Resume from the last saved state: Pulsar will not redeliver messages it
+    # already acked, so a fresh empty state would silently drop them.
+    state = AnalyticsState.load(cfg["state_path"])
     total_received = 0
+    pending: list = []
+
+    def flush() -> None:
+        # Persist state, then ack. A message is acked only once its work is
+        # durable, so a crash redelivers it instead of dropping it; add_repo
+        # dedupes any redelivered message via state.seen.
+        save_and_publish(state, cfg, aggregate_producer)
+        for processed in pending:
+            consumer.acknowledge(processed)
+        pending.clear()
 
     log.info(
-        "analytics consumer started raw_topic=%s top_n=%d enrich_github=%s",
+        "analytics consumer started raw_topic=%s top_n=%d enrich_github=%s resumed_repos=%d",
         cfg["raw_topic"],
         cfg["top_n"],
         cfg["enrich_github"],
+        len(state.seen),
     )
 
     try:
@@ -51,32 +63,30 @@ def main() -> None:
                 total_received += 1
                 enrichment = enrich_repo(github_client, repo) if github_client else None
 
-                is_new = state.add_repo(repo, enrichment)
-                if is_new:
+                if state.add_repo(repo, enrichment):
                     enrichment = enrichment or {}
                     send_json(commits_producer, {**repo, "commit_count": enrichment.get("commit_count")})
                     send_json(tests_producer, {**repo, "has_tests": enrichment.get("has_tests", False)})
                     send_json(ci_producer, {**repo, "has_ci": enrichment.get("has_ci", False)})
-                    processed_since_flush += 1
-
-                consumer.acknowledge(message)
-
-                if processed_since_flush >= cfg["flush_every"]:
-                    save_and_publish(state, cfg, aggregate_producer)
-                    log.info(
-                        "processed %d received messages, %d unique repos",
-                        total_received,
-                        len(state.seen),
-                    )
-                    processed_since_flush = 0
-
-                if cfg["max_repos"] and len(state.seen) >= cfg["max_repos"]:
-                    break
             except Exception:
                 log.exception("failed to process message; negative acking")
                 consumer.negative_acknowledge(message)
+                continue
+
+            pending.append(message)
+
+            if len(pending) >= cfg["flush_every"]:
+                flush()
+                log.info(
+                    "processed %d received messages, %d unique repos",
+                    total_received,
+                    len(state.seen),
+                )
+
+            if cfg["max_repos"] and len(state.seen) >= cfg["max_repos"]:
+                break
     finally:
-        save_and_publish(state, cfg, aggregate_producer)
+        flush()
         consumer.close()
         commits_producer.close()
         tests_producer.close()

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import tempfile
 import unittest
 from collections import Counter
+from pathlib import Path
 
 from analytics.common import AnalyticsState, last_page, top_counter, top_dict
 
@@ -78,6 +80,35 @@ class AnalyticsStateTests(unittest.TestCase):
             results["q4_top_languages_with_tests_and_ci"],
             [{"name": "Python", "count": 1}],
         )
+
+    def test_save_then_load_round_trips_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            results_dir = Path(tmp) / "results"
+            state_path = results_dir / "analytics_state.json"
+
+            original = AnalyticsState()
+            original.add_repo(
+                _repo(1, "Python"),
+                {"commit_count": 12, "has_tests": True, "has_ci": True},
+            )
+            original.add_repo(_repo(2, "Rust"), {"has_tests": True})
+            original.save(results_dir, state_path, top_n=10)
+
+            restored = AnalyticsState.load(state_path)
+
+        # A restart must rebuild every counter, not just start from empty.
+        self.assertEqual(restored.seen, {1, 2})
+        self.assertEqual(restored.languages, original.languages)
+        self.assertEqual(restored.commits, original.commits)
+        self.assertEqual(restored.test_languages, original.test_languages)
+        self.assertEqual(restored.test_ci_languages, original.test_ci_languages)
+
+    def test_load_missing_state_file_returns_empty_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            restored = AnalyticsState.load(Path(tmp) / "absent.json")
+
+        self.assertEqual(restored.seen, set())
+        self.assertEqual(restored.results(10)["processed_unique_repositories"], 0)
 
 
 class HelperTests(unittest.TestCase):
