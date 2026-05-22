@@ -124,12 +124,14 @@ repos.with_ci        # CI/DevOps detection for Q4
 repos.aggregates     # final top-N tables for Q1–Q4
 ```
 
-TODO:
+Implemented analytics path:
 
-- Deploy a Pulsar broker (Docker compose on the master should work).
-- Consumers that enrich `repos.raw` → `repos.with_commits` / `with_tests` / `with_ci`. Q2 commits is the hardest one — GitHub's search response doesn't include commit counts, so we'll need a per-repo `GET /repos/.../commits?per_page=1` + `Link: last` trick. Need to scope this (e.g. stars filter) so we don't blow the rate limit on 365k repos.
-- Aggregators producing `repos.aggregates` with a configurable top-N (the brief explicitly tests "top 10 → top 20 without source changes").
-- Reproducible result files for the report's graphs.
+- `streaming.pulsar_producer` publishes crawler records to `repos.raw`.
+- `analytics.runner` consumes `repos.raw`, dedupes by `repo_id`, enriches each new repository with commit-count, unit-test, and CI evidence, and publishes derived messages to `repos.with_commits`, `repos.with_tests`, and `repos.with_ci`.
+- The same worker writes `data/results/q1_languages.json`, `q2_commits.json`, `q3_tdd_languages.json`, `q4_tdd_ci_languages.json`, and `all_results.json`, then publishes aggregate snapshots to `repos.aggregates`.
+- `TOP_N` controls ranking size at runtime, so top 10 → top 20 does not require source changes.
+
+Q2 commits is the expensive part — GitHub's search response doesn't include commit counts, so the analytics worker uses `GET /repos/.../commits?per_page=1` + the `Link: last` pagination header. Q3 and Q4 also require extra content checks for test and CI files.
 
 Producer ↔ consumer contract:
 

@@ -49,18 +49,30 @@ services:
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
       - PULSAR_TOPIC=${PULSAR_TOPIC}
 
-  consumer:
+  analytics:
     image: "${CRAWLER_IMAGE}"
-    command: python -m streaming.pulsar_toy_consumer
+    command: python -m analytics.runner
     networks:
       - pulsar-net
     deploy:
-      replicas: 5
+      replicas: 1
       placement:
         constraints: [node.role == worker]
       restart_policy:
         condition: on-failure
+    volumes:
+      - /home/ubuntu/app/data:/app/data
     environment:
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
-      - PULSAR_TOPIC=${PULSAR_TOPIC}
-      - PULSAR_SUBSCRIPTION=${PULSAR_SUBSCRIPTION}
+      - RAW_TOPIC=${PULSAR_TOPIC}
+      - COMMITS_TOPIC=${COMMITS_TOPIC}
+      - TESTS_TOPIC=${TESTS_TOPIC}
+      - CI_TOPIC=${CI_TOPIC}
+      - AGGREGATE_TOPIC=${AGGREGATE_TOPIC}
+      - ANALYTICS_SUBSCRIPTION=${ANALYTICS_SUBSCRIPTION}
+      - TOP_N=${TOP_N}
+      - FLUSH_EVERY=${FLUSH_EVERY}
+      - RESULTS_DIR=/app/data/results
+      - ANALYTICS_STATE_PATH=/app/data/results/analytics_state.json
+      - ENRICH_GITHUB=${ENRICH_GITHUB}
+      - GITHUB_TOKEN=${GITHUB_TOKEN_1}
