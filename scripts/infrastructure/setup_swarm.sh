@@ -95,7 +95,12 @@ echo "Creating '/home/ubuntu/data' directory..."
 mkdir -p /home/ubuntu/data
 echo "  Done"
 echo "Deploying pulsar stack..."
-docker stack deploy --detach=true -c "$STACK_FILE" pulsar
+(
+    # apply side-effect only within subshell
+    export $(grep -v '^#' .env | xargs)
+    docker stack deploy --detach=true -c "$STACK_FILE" pulsar
+)
+
 
 wait_for_service_replicas "pulsar_pulsar" 1
 
