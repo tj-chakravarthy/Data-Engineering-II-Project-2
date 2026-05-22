@@ -2,10 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# fixed by TJ: install from the project requirements so Docker does not drift
-# from local/VM setup when dependencies change.
-COPY requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# fixed by TJ: requirements.txt was removed upstream, so keep the container
+# self-contained with the two runtime deps the crawler actually imports.
+RUN pip install --no-cache-dir \
+    "requests>=2.31" \
+    "pulsar-client>=3.5"
 
 COPY src/crawler/ ./crawler/
 COPY src/streaming/ ./streaming/
