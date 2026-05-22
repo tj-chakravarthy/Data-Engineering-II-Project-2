@@ -48,20 +48,6 @@ wait_for_service_replicas() {
     exit 1
 }
 
-build_crawler_image() {
-    local target=$1
-    local image=${CRAWLER_IMAGE:-andreashadjoullis1153/crawler:latest}
-    local command="docker build -f ${REMOTE_REPO_DIR}/src/Dockerfile -t ${image} ${REMOTE_REPO_DIR}"
-
-    if [ "$target" = "local" ]; then
-        echo "Building crawler image on master as ${image}..."
-        $command
-    else
-        echo "Building crawler image on ${target} as ${image}..."
-        ssh "$target" "$command"
-    fi
-}
-
 # -------------------------------------------------------------------
 # 1. Wait for all workers
 # -------------------------------------------------------------------
