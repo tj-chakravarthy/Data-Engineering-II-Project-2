@@ -108,8 +108,8 @@ Open items on the infra side:
 
 - Worker count is hard-coded to four; should be configurable.
 - Floating IP assignment is manual.
-- `run.sh` now copies the repo and runtime `.env` to the master VM, and `setup_swarm.sh` deploys the Pulsar/crawler/consumer Swarm stack.
-- `setup_swarm.sh` builds the crawler image on the Swarm nodes before deploying the stack.
+- `run.sh` provisions the VMs and ships the repo to the master; `setup_swarm.sh` deploys the Pulsar/crawler/analytics Swarm stack.
+- `setup_swarm.sh` deploys the image named by `CRAWLER_IMAGE`; run `src/build_and_push.sh` first when the image changes.
 - A clean-VM reproduction guide still needs a final pass once the full stack is demo-tested.
 
 ## Streaming and application logic
@@ -173,7 +173,7 @@ export PYTHONPATH=src
 python3 -m unittest discover -s tests
 ```
 
-34 tests right now. Crawler covers date slicing, dedup, adaptive range splitting, streaming cache writes, rate-limit retry/budget. Producer covers async send, transient retry recovery, permanent failure handling, in-flight bound, checkpoint skip + persist, ack-gated NDJSON mirror.
+50 tests right now. Crawler covers date slicing, dedup, adaptive range splitting, streaming cache writes, rate-limit retry/budget, and local `.env` loading. Producer covers async send, transient retry recovery, permanent failure handling, in-flight bound, checkpoint skip + persist, ack-gated NDJSON mirror.
 
 Still TODO when the rest of the stack lands: integration tests for the producer→broker→consumer flow, smoke tests against the Docker compose, experiment reproducibility checks.
 
