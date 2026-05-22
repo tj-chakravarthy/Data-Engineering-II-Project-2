@@ -7,6 +7,7 @@ set -e
 WORKERS="w1 w2 w3 w4"
 REMOTE_REPO_DIR="/home/ubuntu/app"
 TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure"
+ENV_FILE="${TARGET_PATH}/.env"
 STACK_FILE="${TARGET_PATH}/cluster-stack.yml"
 MAX_ATTEMPTS=30
 
@@ -97,7 +98,8 @@ echo "  Done"
 echo "Deploying pulsar stack..."
 (
     # apply side-effect only within subshell
-    export $(grep -v '^#' .env | xargs)
+    export $(grep -v '^#' "$ENV_FILE" | xargs)
+    export PULSAR_SERVICE_URL="pulsar://$MASTER_IP:6650"
     docker stack deploy --detach=true -c "$STACK_FILE" pulsar
 )
 

@@ -55,9 +55,9 @@ services:
     networks:
       - pulsar-net
     deploy:
-      replicas: 1
+      replicas: 5
       placement:
-        constraints: [node.role == manager]
+        constraints: [node.role == worker]
       restart_policy:
         condition: on-failure
     environment:
