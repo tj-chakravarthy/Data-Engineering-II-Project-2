@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 from collections import Counter
 from pathlib import Path
@@ -12,6 +13,8 @@ from urllib.parse import parse_qs, urlparse
 import requests
 
 from crawler.github_client import GitHubClient
+
+log = logging.getLogger(__name__)
 
 TEST_PATHS = ["tests", "test", "spec", "__tests__", "pytest.ini", "package.json", "pom.xml", "Cargo.toml"]
 CI_PATHS = [".github/workflows", ".gitlab-ci.yml", ".travis.yml", "Jenkinsfile", ".circleci/config.yml"]
@@ -49,21 +52,30 @@ class AnalyticsState:
     def load(cls, state_path: Path) -> AnalyticsState:
         """Rebuild state from a previous run's state file for crash recovery.
 
-        Returns empty state when the file does not exist yet.
+        Returns empty state when the file is missing or unreadable, so a
+        corrupt state file degrades to a fresh start instead of a crash loop.
         """
         state = cls()
         if not state_path.exists():
             return state
-        with state_path.open(encoding="utf-8") as file:
-            data = json.load(file)
-        state.seen = {int(repo_id) for repo_id in data.get("seen_repo_ids", [])}
-        state.languages = Counter(data.get("language_counts", {}))
-        state.commits = {
-            str(name): int(count)
-            for name, count in data.get("commit_counts", {}).items()
-        }
-        state.test_languages = Counter(data.get("tdd_language_counts", {}))
-        state.test_ci_languages = Counter(data.get("tdd_ci_language_counts", {}))
+        try:
+            with state_path.open(encoding="utf-8") as file:
+                data = json.load(file)
+            state.seen = {int(repo_id) for repo_id in data.get("seen_repo_ids", [])}
+            state.languages = Counter(data.get("language_counts", {}))
+            state.commits = {
+                str(name): int(count)
+                for name, count in data.get("commit_counts", {}).items()
+            }
+            state.test_languages = Counter(data.get("tdd_language_counts", {}))
+            state.test_ci_languages = Counter(data.get("tdd_ci_language_counts", {}))
+        except Exception:
+            log.warning(
+                "could not load %s; starting from empty state",
+                state_path,
+                exc_info=True,
+            )
+            return cls()
         return state
 
     def add_repo(self, repo: dict, enrichment: dict | None = None) -> bool:

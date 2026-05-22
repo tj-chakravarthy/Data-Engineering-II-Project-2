@@ -110,6 +110,17 @@ class AnalyticsStateTests(unittest.TestCase):
         self.assertEqual(restored.seen, set())
         self.assertEqual(restored.results(10)["processed_unique_repositories"], 0)
 
+    def test_load_corrupt_state_file_returns_empty_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path = Path(tmp) / "analytics_state.json"
+            state_path.write_text("{ not valid json", encoding="utf-8")
+
+            restored = AnalyticsState.load(state_path)
+
+        # A corrupt state file must degrade to a fresh start, not crash.
+        self.assertEqual(restored.seen, set())
+        self.assertEqual(restored.results(10)["processed_unique_repositories"], 0)
+
 
 class HelperTests(unittest.TestCase):
     def test_top_counter_sorts_by_count_and_limits(self) -> None:
