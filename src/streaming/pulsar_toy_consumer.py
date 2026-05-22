@@ -6,12 +6,13 @@ import json
 import logging
 import os
 
-import pulsar
+from streaming.pulsar_connection import get_pulsar_client
 
 log = logging.getLogger(__name__)
 
 DEFAULT_BROKER_URL = "pulsar://pulsar:6650"
-DEFAULT_TOPIC = "persistent://public/default/github-repos"
+# fixed by TJ: toy consumer defaults to the same raw topic as the producer.
+DEFAULT_TOPIC = "repos.raw"
 DEFAULT_SUBSCRIPTION = "debug-consumer"
 
 
@@ -22,7 +23,18 @@ def main() -> None:
     topic = os.environ.get("PULSAR_TOPIC", DEFAULT_TOPIC)
     subscription = os.environ.get("PULSAR_SUBSCRIPTION", DEFAULT_SUBSCRIPTION)
 
-    client = pulsar.Client(broker_url)
+    # fixed by TJ: PULSAR_MAX_MESSAGES lets us run a bounded smoke test
+    # ("consume N messages then exit"). Before this the consumer could only
+    # block forever, so there was no way to verify the pipeline and stop.
+    # Unset = run forever, which is what the Swarm service still wants.
+    max_messages_env = os.environ.get("PULSAR_MAX_MESSAGES")
+    max_messages = int(max_messages_env) if max_messages_env else None
+
+    # fixed by TJ: import pulsar lazily, like the producer does, so importing
+    # this module (e.g. in a test) does not require the pulsar-client package.
+    import pulsar
+
+    client = get_pulsar_client(broker_url, probe_topic=topic)
 
     consumer = client.subscribe(
         topic,
@@ -30,8 +42,14 @@ def main() -> None:
         consumer_type=pulsar.ConsumerType.Shared,
     )
 
-    log.info("Consumer connected: broker=%s topic=%s subscription=%s", broker_url, topic, subscription)
+    log.info(
+        "Consumer connected: broker=%s topic=%s subscription=%s",
+        broker_url,
+        topic,
+        subscription,
+    )
 
+    consumed = 0
     try:
         while True:
             msg = consumer.receive()
@@ -53,6 +71,11 @@ def main() -> None:
             except Exception:
                 log.exception("failed to process message")
                 consumer.negative_acknowledge(msg)
+
+            consumed += 1
+            if max_messages is not None and consumed >= max_messages:
+                log.info("reached PULSAR_MAX_MESSAGES=%d; exiting", max_messages)
+                break
 
     finally:
         consumer.close()

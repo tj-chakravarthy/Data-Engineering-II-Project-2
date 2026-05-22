@@ -1,8 +1,7 @@
-version: '3.8'
-
 networks:
   pulsar-net:
     driver: overlay
+    attachable: true
 
 services:
   pulsar:
@@ -27,8 +26,12 @@ services:
       start_period: 60s
 
   crawler:
-    image: andreashadjoullis1153/crawler:latest
-    command: python -m streaming.pulsar_producer --days 1
+    image: "${CRAWLER_IMAGE}"
+    command: >
+      python -m streaming.pulsar_producer
+      --days ${CRAWL_DAYS}
+      --date-field ${CRAWL_DATE_FIELD}
+      --checkpoint-path data/output/repos.published.json
     networks:
       - pulsar-net
     deploy:
@@ -38,20 +41,26 @@ services:
       restart_policy:
         condition: on-failure
     volumes:
-      - /home/ubuntu/data:/app/data
-    env_file:
-      - .env
+      - /home/ubuntu/app/data:/app/data
+    environment:
+      - GITHUB_TOKEN_1=${GITHUB_TOKEN_1}
+      - GITHUB_TOKEN_2=${GITHUB_TOKEN_2}
+      - GITHUB_TOKEN_3=${GITHUB_TOKEN_3}
+      - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
+      - PULSAR_TOPIC=${PULSAR_TOPIC}
 
   consumer:
-    image: andreashadjoullis1153/crawler:latest
+    image: "${CRAWLER_IMAGE}"
     command: python -m streaming.pulsar_toy_consumer
     networks:
       - pulsar-net
     deploy:
       replicas: 1
       placement:
-        constraints: [node.role == worker]
+        constraints: [node.role == manager]
       restart_policy:
         condition: on-failure
-    env_file:
-      - .env
+    environment:
+      - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
+      - PULSAR_TOPIC=${PULSAR_TOPIC}
+      - PULSAR_SUBSCRIPTION=${PULSAR_SUBSCRIPTION}

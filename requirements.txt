@@ -1,2 +1,0 @@
-requests>=2.31
-pulsar-client>=3.5

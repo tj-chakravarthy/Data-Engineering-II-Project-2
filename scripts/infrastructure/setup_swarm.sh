@@ -65,6 +65,10 @@ for worker in $WORKERS; do
 done
 echo "  Done."
 
+# The crawler keeps cache/checkpoint files under /app/data, so create the
+# bind-mount source on the manager before Swarm starts the service.
+mkdir -p "${REMOTE_REPO_DIR}/data/cache" "${REMOTE_REPO_DIR}/data/output"
+
 # -------------------------------------------------------------------
 # 3. Init Docker Swarm on master
 # -------------------------------------------------------------------

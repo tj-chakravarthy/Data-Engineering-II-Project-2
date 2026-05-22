@@ -22,10 +22,10 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env and put your GitHub token in GITHUB_TOKEN.
+# Edit .env and put your GitHub token in GITHUB_TOKEN_1.
 ```
 
-You can drop additional tokens in as `GITHUB_TOKEN_2`, `GITHUB_TOKEN_3`, … Anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
+You can drop additional tokens in as `GITHUB_TOKEN_2`, `GITHUB_TOKEN_3`, up to `GITHUB_TOKEN_5`. Anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
 
 ## Running the crawler
 
@@ -173,7 +173,7 @@ export PYTHONPATH=src
 python3 -m unittest discover -s tests
 ```
 
-25 tests right now. Crawler covers date slicing, dedup, adaptive range splitting, streaming cache writes, rate-limit retry/budget. Producer covers async send, transient retry recovery, permanent failure handling, in-flight bound, checkpoint skip + persist, ack-gated NDJSON mirror.
+34 tests right now. Crawler covers date slicing, dedup, adaptive range splitting, streaming cache writes, rate-limit retry/budget. Producer covers async send, transient retry recovery, permanent failure handling, in-flight bound, checkpoint skip + persist, ack-gated NDJSON mirror.
 
 Still TODO when the rest of the stack lands: integration tests for the producer→broker→consumer flow, smoke tests against the Docker compose, experiment reproducibility checks.
 
