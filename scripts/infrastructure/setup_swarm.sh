@@ -127,12 +127,13 @@ for worker in $WORKERS; do
     echo "  $worker joined."
 done
 
-ANALYTICS_NODE=$(docker node ls --filter role=worker --format '{{.Hostname}}' | head -1)
+ANALYTICS_SSH_HOST=$(echo "$WORKERS" | awk '{print $1}')
+ANALYTICS_NODE=$(ssh "$ANALYTICS_SSH_HOST" hostname)
 if [ -z "$ANALYTICS_NODE" ]; then
     echo "ERROR: no Swarm worker node found for analytics placement."
     exit 1
 fi
-echo "Pinning analytics service to worker node '$ANALYTICS_NODE'..."
+echo "Pinning analytics service to worker '$ANALYTICS_SSH_HOST' (node '$ANALYTICS_NODE')..."
 docker node update --label-add analytics=true "$ANALYTICS_NODE"
 echo "  Analytics node labeled."
 
@@ -153,6 +154,7 @@ echo "Deploying pulsar stack..."
 wait_for_service_replicas "pulsar_pulsar" 1
 wait_for_service_running_or_completed "pulsar_crawler" 1
 wait_for_service_replicas "pulsar_analytics" 1
+bash "${TARGET_PATH}/smoke_check.sh"
 
 # -------------------------------------------------------------------
 # 6. Summary
