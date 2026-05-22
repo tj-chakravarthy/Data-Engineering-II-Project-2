@@ -175,7 +175,7 @@ python3 -m unittest discover -s tests
 
 52 tests right now. Crawler covers date slicing, dedup, adaptive range splitting, streaming cache writes, rate-limit retry/budget, and local `.env` loading. Producer covers async send, transient retry recovery, permanent failure handling, in-flight bound, checkpoint skip + persist, ack-gated NDJSON mirror.
 
-Still TODO when the rest of the stack lands: integration tests for the producer→broker→consumer flow, smoke tests against the Docker compose, experiment reproducibility checks.
+Still TODO when the rest of the stack lands: integration tests for the producer→broker→consumer flow, smoke tests against the Docker Swarm deployment, experiment reproducibility checks.
 
 ## Deadlines
 
