@@ -127,6 +127,15 @@ for worker in $WORKERS; do
     echo "  $worker joined."
 done
 
+ANALYTICS_NODE=$(docker node ls --filter role=worker --format '{{.Hostname}}' | head -1)
+if [ -z "$ANALYTICS_NODE" ]; then
+    echo "ERROR: no Swarm worker node found for analytics placement."
+    exit 1
+fi
+echo "Pinning analytics service to worker node '$ANALYTICS_NODE'..."
+docker node update --label-add analytics=true "$ANALYTICS_NODE"
+echo "  Analytics node labeled."
+
 # -------------------------------------------------------------------
 # 5. Deploy stack and wait for Pulsar standalone to be ready
 # -------------------------------------------------------------------
