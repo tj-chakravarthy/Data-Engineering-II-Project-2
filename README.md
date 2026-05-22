@@ -110,7 +110,7 @@ Open items on the infra side:
 - Floating IP assignment is manual.
 - `run.sh` provisions the VMs and ships the repo to the master; `setup_swarm.sh` deploys the Pulsar/crawler/analytics Swarm stack.
 - `setup_swarm.sh` deploys the image named by `CRAWLER_IMAGE`; run `src/build_and_push.sh` first when the image changes.
-- `setup_swarm.sh` runs `smoke_check.sh` after deployment; rerun it on the master with `bash /home/ubuntu/app/scripts/infrastructure/smoke_check.sh`.
+- `setup_swarm.sh` runs `verify_swarm_pipeline.sh` after deployment; rerun it on the master with `bash /home/ubuntu/app/scripts/infrastructure/verify_swarm_pipeline.sh`.
 - A clean-VM reproduction guide still needs a final pass once the full stack is demo-tested.
 
 ## Streaming and application logic

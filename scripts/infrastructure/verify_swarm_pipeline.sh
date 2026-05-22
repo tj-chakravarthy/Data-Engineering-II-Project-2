@@ -1,5 +1,5 @@
 #!/bin/bash
-# smoke_check.sh
+# verify_swarm_pipeline.sh
 # Run from the Swarm manager after the Pulsar stack is deployed.
 set -e
 
@@ -95,7 +95,7 @@ wait_for_analytics_results() {
     exit 1
 }
 
-echo "Running post-deploy smoke check..."
+echo "Verifying deployed Swarm pipeline..."
 PULSAR_CONTAINER=$(pulsar_container_id)
 if [ -z "$PULSAR_CONTAINER" ]; then
     echo "ERROR: could not find pulsar_pulsar container."
@@ -113,4 +113,4 @@ TOPIC=$(topic_path)
 wait_for_raw_messages "$PULSAR_CONTAINER" "$TOPIC"
 wait_for_analytics_results "$ANALYTICS_SSH_HOST"
 
-echo "Smoke check passed."
+echo "Swarm pipeline verification passed."

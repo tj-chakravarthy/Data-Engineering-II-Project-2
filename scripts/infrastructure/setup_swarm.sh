@@ -154,7 +154,7 @@ echo "Deploying pulsar stack..."
 wait_for_service_replicas "pulsar_pulsar" 1
 wait_for_service_running_or_completed "pulsar_crawler" 1
 wait_for_service_replicas "pulsar_analytics" 1
-bash "${TARGET_PATH}/smoke_check.sh"
+bash "${TARGET_PATH}/verify_swarm_pipeline.sh"
 
 # -------------------------------------------------------------------
 # 6. Summary
