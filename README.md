@@ -23,7 +23,7 @@ source .venv/bin/activate
 pip install requests pulsar-client
 ```
 
-Runtime config lives in `scripts/infrastructure/.env`, tracked in the repo; `scripts/infrastructure/.env.example` lists every field. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5` — anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
+Runtime config lives in `scripts/infrastructure/.env`, tracked in the repo. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5` — anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
 
 ## Running the crawler
 
