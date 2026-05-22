@@ -20,7 +20,7 @@ git clone https://github.com/tj-chakravarthy/Data-Engineering-II-Project-2.git
 cd Data-Engineering-II-Project-2
 python3 -m venv .venv
 source .venv/bin/activate
-pip install requests pulsar-client
+pip install requests pulsar-client matplotlib
 ```
 
 Runtime config lives in `scripts/infrastructure/.env`, tracked in the repo. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5` — anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
