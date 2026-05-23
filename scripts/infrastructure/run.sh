@@ -22,8 +22,8 @@ if [ ! -f "$LOCAL_ENV_FILE" ]; then
     exit 1
 fi
 
-echo "Sourcing 'UPPMAX-openrc.sh.ignore'..."
-source UPPMAX-openrc.sh.ignore
+echo "Sourcing 'UPPMAX-openrc.sh'..."
+source UPPMAX-openrc.sh
 
 # --- Python venv + deps ---
 if [ ! -d "$VENV_DIR" ]; then
