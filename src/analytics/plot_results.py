@@ -38,7 +38,9 @@ RESULT_SPECS = {
 
 
 def main() -> None:
-    plot_result_files(Path("data/results"), Path("data/figures"))
+    results_dir = Path(os.getenv("RESULTS_DIR", "data/results"))
+    figures_dir = Path(os.getenv("FIGURES_DIR", "data/figures"))
+    plot_result_files(results_dir, figures_dir)
 
 
 def plot_result_files(results_dir: Path, figures_dir: Path) -> list[Path]:

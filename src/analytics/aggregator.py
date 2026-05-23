@@ -10,7 +10,7 @@ import json
 import logging
 import time
 
-from analytics.common import AnalyticsState, config
+from analytics.common import AnalyticsState, config, is_receive_timeout, should_idle_flush
 from analytics.plot_results import plot_aggregate_payload
 from crawler.crawl import load_dotenv
 from streaming.pulsar_connection import get_pulsar_client
@@ -58,12 +58,23 @@ def main() -> None:
                     idle_seconds = time.monotonic() - last_message_at
                     if should_idle_flush(len(pending), idle_seconds, cfg["flush_idle_seconds"]):
                         pending_count = len(pending)
-                        flush()
-                        log.info(
-                            "idle-flushed %d pending messages after %.1fs",
-                            pending_count,
-                            idle_seconds,
-                        )
+                        try:
+                            flush()
+                            log.info(
+                                "idle-flushed %d pending messages after %.1fs",
+                                pending_count,
+                                idle_seconds,
+                            )
+                        except Exception:
+                            # Mirror the runner's idle-flush handling: a save/plot
+                            # failure must not kill the consumer loop. Pending
+                            # messages stay un-acked; Pulsar will redeliver on
+                            # reconnect or after the negative-ack timeout.
+                            log.exception(
+                                "failed to flush %d pending messages on idle; "
+                                "leaving un-acked for redelivery",
+                                pending_count,
+                            )
                     continue
                 raise
 
@@ -118,15 +129,13 @@ def enriched_records(payload) -> list[dict]:
 def save_and_plot(state: AnalyticsState, cfg: dict) -> None:
     state.save(cfg["results_dir"], cfg["state_path"], cfg["top_n"])
     results = state.results(cfg["top_n"])
-    plot_aggregate_payload(results, cfg["figures_dir"])
-
-
-def should_idle_flush(pending_count: int, idle_seconds: float, flush_idle_seconds: int) -> bool:
-    return pending_count > 0 and flush_idle_seconds > 0 and idle_seconds >= flush_idle_seconds
-
-
-def is_receive_timeout(exc: Exception) -> bool:
-    return "timeout" in exc.__class__.__name__.lower()
+    # Plot failures (font missing, matplotlib backend issue) must not block
+    # the ack path: results JSON is already on disk and is the source of truth.
+    # A future flush will retry the figures.
+    try:
+        plot_aggregate_payload(results, cfg["figures_dir"])
+    except Exception:
+        log.exception("plot_aggregate_payload failed; results JSON is still saved")
 
 
 if __name__ == "__main__":

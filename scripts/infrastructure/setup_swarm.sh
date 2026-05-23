@@ -155,6 +155,8 @@ DEPLOY_STARTED_AT=$(date +%s)
 wait_for_service_replicas "pulsar_pulsar" 1
 wait_for_service_running_or_completed "pulsar_crawler" 1
 wait_for_service_replicas "pulsar_analytics" 1
+# fixed by TJ wait for aggregator before verify so the smoke test can't race startup
+wait_for_service_replicas "pulsar_analytics-aggregator" 1
 DEPLOY_STARTED_AT="$DEPLOY_STARTED_AT" bash "${TARGET_PATH}/verify_swarm_pipeline.sh"
 
 # -------------------------------------------------------------------

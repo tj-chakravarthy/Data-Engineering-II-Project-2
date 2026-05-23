@@ -58,10 +58,15 @@ print_debug_logs() {
     echo ""
     echo "==== analytics logs ===="
     docker service logs pulsar_analytics --tail 50 || true
+    # fixed by TJ tail the aggregator too so failures show its diagnostics
+    echo ""
+    echo "==== analytics-aggregator logs ===="
+    docker service logs pulsar_analytics-aggregator --tail 50 || true
     echo ""
     echo "==== service tasks ===="
     docker service ps pulsar_crawler --no-trunc || true
     docker service ps pulsar_analytics --no-trunc || true
+    docker service ps pulsar_analytics-aggregator --no-trunc || true
 }
 
 wait_for_raw_messages() {

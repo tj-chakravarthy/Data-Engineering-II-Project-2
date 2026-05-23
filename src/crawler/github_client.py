@@ -135,11 +135,13 @@ class GitHubClient:
 
     Tokens can be supplied two ways:
 
-    - Pass ``tokens=[...]`` explicitly. Required for multi-runner deployments
-      where each runner owns a partitioned subset of the global pool.
+    - Pass ``tokens=[...]`` explicitly. The caller is responsible for any
+      partitioning across runners.
     - Omit ``tokens`` and any environment variable whose name starts with
-      ``GITHUB_TOKEN`` is included automatically. Used for local single-runner
-      runs and tests.
+      ``GITHUB_TOKEN`` is included automatically, then stride-sliced by
+      ``RUNNER_ID`` / ``NUM_RUNNERS`` so multiple replicas of the same service
+      own disjoint subsets of the global pool. Single-runner runs (defaults
+      ``RUNNER_ID=0``, ``NUM_RUNNERS=1``) see every token.
     """
 
     def __init__(
@@ -153,14 +155,12 @@ class GitHubClient:
         transient_retry_initial_seconds: float = 1.0,
     ) -> None:
         if tokens is None:
-            tokens = [
-                value
-                for key, value in os.environ.items()
-                if key.startswith("GITHUB_TOKEN") and value
-            ]
+            tokens = tokens_from_env()
         if not tokens:
             raise RuntimeError(
-                "No GitHub tokens configured. Set GITHUB_TOKEN or pass tokens=[...]."
+                "No GitHub tokens configured. Set GITHUB_TOKEN or pass tokens=[...]. "
+                "Multi-runner deployments must keep NUM_RUNNERS <= number of tokens "
+                "so every runner gets at least one."
             )
         self.pool = TokenPool(tokens)
         self.base_url = base_url.rstrip("/")
@@ -345,6 +345,41 @@ class GitHubClient:
         )
         if wait > 0:
             time.sleep(wait)
+
+
+def tokens_from_env(environ: Mapping[str, str] | None = None) -> list[str]:
+    """Return the GITHUB_TOKEN* slice owned by this runner.
+
+    Two replicas of the same service must not share a token: they'd hammer the
+    same per-token rate limit and the pool's predictive routing would thrash.
+    The stride slice ``all_tokens[RUNNER_ID::NUM_RUNNERS]`` gives every runner
+    a disjoint subset. Defaults (``RUNNER_ID=0``, ``NUM_RUNNERS=1``) keep
+    single-replica deployments and tests unchanged.
+
+    Tokens are ordered by env-var name for a stable, reproducible slice across
+    processes that may have set their env in different orders.
+    """
+    env = environ if environ is not None else os.environ
+    pairs = sorted(
+        (key, value)
+        for key, value in env.items()
+        if key.startswith("GITHUB_TOKEN") and value
+    )
+    all_tokens = [value for _, value in pairs]
+    num_runners = max(_int_or_none(env.get("NUM_RUNNERS")) or 1, 1)
+    runner_id = _int_or_none(env.get("RUNNER_ID")) or 0
+    return partition_tokens(all_tokens, runner_id, num_runners)
+
+
+def partition_tokens(all_tokens: list[str], runner_id: int, num_runners: int) -> list[str]:
+    """Return ``all_tokens[runner_id::num_runners]`` with input validation."""
+    if num_runners < 1:
+        raise ValueError(f"NUM_RUNNERS must be >= 1, got {num_runners}")
+    if runner_id < 0 or runner_id >= num_runners:
+        raise ValueError(
+            f"RUNNER_ID={runner_id} out of range for NUM_RUNNERS={num_runners}"
+        )
+    return all_tokens[runner_id::num_runners]
 
 
 def _is_rate_limited(response: requests.Response) -> bool:

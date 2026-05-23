@@ -30,9 +30,10 @@ class RepoRecord:
     topics: list[str] | None = None
     open_issues_count: int | None = None
     # Wall-clock UTC ISO-8601 timestamp set when the crawler emits the record
-    # downstream. Used by the analytics aggregator to compute end-to-end latency
-    # per repo. None means the record predates this field or was constructed in
-    # a context that does not emit (tests, ad-hoc reads).
+    # downstream. Carried through the streaming pipeline so any downstream
+    # consumer can compute end-to-end latency by diffing against its own
+    # processing wall clock. None means the record predates this field or was
+    # constructed in a context that does not emit (tests, ad-hoc reads).
     emitted_at: str | None = None
 
     @classmethod

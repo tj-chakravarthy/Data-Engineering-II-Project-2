@@ -10,6 +10,8 @@ from crawler.github_client import (
     INITIAL_TOKEN_QUOTA,
     RateLimitError,
     TokenPool,
+    partition_tokens,
+    tokens_from_env,
 )
 
 
@@ -321,6 +323,89 @@ class TokenPoolTests(unittest.TestCase):
         self.assertEqual(snap["t1"].remaining, 0)
         # Other tokens untouched
         self.assertGreater(snap["t2"].remaining, 0)
+
+
+class TokenPartitionTests(unittest.TestCase):
+    def test_single_runner_gets_every_token(self) -> None:
+        self.assertEqual(
+            partition_tokens(["a", "b", "c", "d", "e"], runner_id=0, num_runners=1),
+            ["a", "b", "c", "d", "e"],
+        )
+
+    def test_two_runners_get_disjoint_slices_covering_every_token(self) -> None:
+        all_tokens = ["a", "b", "c", "d", "e"]
+        slice_a = partition_tokens(all_tokens, runner_id=0, num_runners=2)
+        slice_b = partition_tokens(all_tokens, runner_id=1, num_runners=2)
+        self.assertEqual(slice_a, ["a", "c", "e"])
+        self.assertEqual(slice_b, ["b", "d"])
+        # The whole point: every token belongs to exactly one runner.
+        self.assertEqual(set(slice_a) | set(slice_b), set(all_tokens))
+        self.assertEqual(set(slice_a) & set(slice_b), set())
+
+    def test_more_runners_than_tokens_gives_some_runners_nothing(self) -> None:
+        # Empty slice; GitHubClient.__init__ converts this into a clear error
+        # rather than running with zero quota.
+        self.assertEqual(
+            partition_tokens(["a", "b"], runner_id=2, num_runners=3),
+            [],
+        )
+
+    def test_invalid_runner_id_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            partition_tokens(["a"], runner_id=1, num_runners=1)
+        with self.assertRaises(ValueError):
+            partition_tokens(["a"], runner_id=-1, num_runners=1)
+
+    def test_invalid_num_runners_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            partition_tokens(["a"], runner_id=0, num_runners=0)
+
+    def test_tokens_from_env_defaults_to_single_runner_full_pool(self) -> None:
+        env = {"GITHUB_TOKEN_1": "x", "GITHUB_TOKEN_2": "y", "UNRELATED": "z"}
+        self.assertEqual(tokens_from_env(env), ["x", "y"])
+
+    def test_tokens_from_env_applies_runner_partition(self) -> None:
+        env = {
+            "GITHUB_TOKEN_1": "x",
+            "GITHUB_TOKEN_2": "y",
+            "GITHUB_TOKEN_3": "z",
+            "NUM_RUNNERS": "2",
+            "RUNNER_ID": "1",
+        }
+        # 3 tokens, 2 runners, this is runner 1 → ["y"] only.
+        self.assertEqual(tokens_from_env(env), ["y"])
+
+    def test_tokens_from_env_orders_by_var_name_for_stable_slice(self) -> None:
+        # Insertion order intentionally scrambled: stable slice requires
+        # sorting by env-var name so two processes pick the same partition.
+        env = {
+            "GITHUB_TOKEN_3": "c",
+            "GITHUB_TOKEN_1": "a",
+            "GITHUB_TOKEN_2": "b",
+        }
+        self.assertEqual(tokens_from_env(env), ["a", "b", "c"])
+
+    def test_github_client_uses_partition_from_env(self) -> None:
+        env = {
+            "GITHUB_TOKEN_1": "x",
+            "GITHUB_TOKEN_2": "y",
+            "NUM_RUNNERS": "2",
+            "RUNNER_ID": "0",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            client = GitHubClient()
+        self.assertEqual(list(client.pool.tokens), ["x"])
+
+    def test_github_client_empty_slice_raises_with_clear_message(self) -> None:
+        env = {
+            "GITHUB_TOKEN_1": "x",
+            "NUM_RUNNERS": "2",
+            "RUNNER_ID": "1",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            with self.assertRaises(RuntimeError) as ctx:
+                GitHubClient()
+        self.assertIn("NUM_RUNNERS", str(ctx.exception))
 
 
 if __name__ == "__main__":

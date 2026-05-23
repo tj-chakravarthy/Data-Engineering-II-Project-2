@@ -13,13 +13,13 @@ from analytics.aggregator import (
     process_enriched_records,
     process_enriched_repo,
     save_and_plot,
-    should_idle_flush,
 )
 from analytics.common import (
     AnalyticsState,
     commit_count,
     last_page,
     path_matches,
+    should_idle_flush,
     top_counter,
     top_dict,
 )
@@ -282,6 +282,28 @@ class AnalyticsStateTests(unittest.TestCase):
                 saved["q2_top_projects_by_commits"],
                 [{"name": "owner/one", "count": 42}],
             )
+
+    def test_save_and_plot_swallows_plot_failure_but_writes_results(self) -> None:
+        # Plot failures must not block the aggregator's ack path: results JSON
+        # is the source of truth and is already on disk by the time we plot.
+        from unittest import mock
+
+        state = AnalyticsState()
+        state.add_repo(_repo(1, "Python"))
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "results_dir": Path(tmp) / "results",
+                "figures_dir": Path(tmp) / "figures",
+                "state_path": Path(tmp) / "results" / "analytics_state.json",
+                "top_n": 10,
+            }
+            with mock.patch(
+                "analytics.aggregator.plot_aggregate_payload",
+                side_effect=RuntimeError("matplotlib boom"),
+            ):
+                save_and_plot(state, cfg)
+
+            self.assertTrue((cfg["results_dir"] / "all_results.json").exists())
 
 
 class HelperTests(unittest.TestCase):

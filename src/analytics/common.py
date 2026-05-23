@@ -27,9 +27,6 @@ def config() -> dict:
         "broker_url": os.getenv("PULSAR_SERVICE_URL", "pulsar://localhost:6650"),
         "raw_topic": os.getenv("RAW_TOPIC", "repos.raw"),
         "enriched_topic": os.getenv("ENRICHED_TOPIC", "repos.enriched"),
-        "commits_topic": os.getenv("COMMITS_TOPIC", "repos.with_commits"),
-        "tests_topic": os.getenv("TESTS_TOPIC", "repos.with_tests"),
-        "ci_topic": os.getenv("CI_TOPIC", "repos.with_ci"),
         "subscription": os.getenv("ANALYTICS_SUBSCRIPTION", "analytics-q1-q4"),
         "aggregator_subscription": os.getenv("AGGREGATOR_SUBSCRIPTION", "analytics-aggregator"),
         "top_n": int(os.getenv("TOP_N", "10")),
@@ -201,6 +198,24 @@ def top_counter(counter: Counter[str], n: int) -> list[dict]:
 def top_dict(values: dict[str, int], n: int) -> list[dict]:
     items = sorted(values.items(), key=lambda item: item[1], reverse=True)
     return [{"name": name, "count": count} for name, count in items[:n]]
+
+
+def should_idle_flush(pending_count: int, idle_seconds: float, flush_idle_seconds: int) -> bool:
+    return pending_count > 0 and flush_idle_seconds > 0 and idle_seconds >= flush_idle_seconds
+
+
+def is_receive_timeout(exc: Exception) -> bool:
+    # Prefer the real pulsar.Timeout type when pulsar is installed; fall back to
+    # a name match so tests that simulate timeouts without importing pulsar
+    # still flow through the idle-flush path.
+    try:
+        import pulsar
+    except ImportError:
+        return "timeout" in exc.__class__.__name__.lower()
+    timeout_type = getattr(pulsar, "Timeout", None)
+    if timeout_type is not None and isinstance(exc, timeout_type):
+        return True
+    return "timeout" in exc.__class__.__name__.lower()
 
 
 def write_json(path: Path, data) -> None:

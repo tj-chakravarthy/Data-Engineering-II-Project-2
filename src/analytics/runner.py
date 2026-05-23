@@ -10,8 +10,7 @@ import json
 import logging
 import time
 
-from analytics.common import config, enrich_repo
-from analytics.aggregator import is_receive_timeout, should_idle_flush
+from analytics.common import config, enrich_repo, is_receive_timeout, should_idle_flush
 from crawler.crawl import load_dotenv
 from crawler.github_client import GitHubClient
 from streaming.pulsar_connection import get_pulsar_client
