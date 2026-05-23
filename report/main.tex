@@ -10,7 +10,9 @@
 \usepackage{xcolor}
 \usepackage{url}
 \usepackage{float}
+\usepackage{tikz}
 \usepackage[colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black]{hyperref}
+\usetikzlibrary{positioning,arrows.meta}
 
 
 \hypersetup{
@@ -101,7 +103,7 @@ incrementally rather than only after a complete dataset has been collected.
 Blamey et al. compare stream-processing systems using throughput-oriented
 benchmarks under different processing loads~\cite{blamey2019apache}. In this
 project, Apache Pulsar is used as the streaming layer, following a
-producer--topic--consumer model where repository records are published as
+producer-topic-consumer model where repository records are published as
 messages and processed by worker services~\cite{apache_pulsar}.
 
 Cloud deployment and automation are also relevant because the system is
@@ -116,51 +118,133 @@ and easier to deploy across cloud resources.
 \label{sec:architecture}
 
 \subsection{Overview}
-% Describe the full system pipeline Fig.~\ref{fig:architecture}.
+The proposed system is designed as a cloud-based streaming pipeline for
+collecting, enriching, and analyzing GitHub repository data.
+Figure~\ref{fig:architecture} shows the high-level architecture of the system.
+The architecture separates the pipeline into three main stages: data collection,
+repository metadata enrichment, and data aggregation. This separation allows the
+runners responsible for enriching the metadata repository to be developed,
+deployed, and scaled independently.
+
+The pipeline starts with a crawler that retrieves repository metadata from the
+GitHub API. Each repository is converted into a structured record and published
+to a raw repository stream. A configurable number of processing runners consume
+these records and enrich them with additional information using the GitHub API.
+This enrichment is necessary because the initial metadata is not sufficient to
+answer all project questions, especially those related to commit activity,
+unit-test usage, and CI/CD usage. The runners then publish data to an
+aggregation stream. Finally, the aggregator computes a new answer to each
+question based on all aggregated data so far.
 
 \begin{figure}[!t]
-    \centering
-    Example architecture diagram: GitHub API $\rightarrow$ crawler
-    $\rightarrow$ Apache Pulsar topic $\rightarrow$ workers services $\rightarrow$ storage
-    $\rightarrow$ results.
-    \caption{System architecture overview.}
-    \label{fig:architecture}
+\centering
+\begin{tikzpicture}[
+    node distance=0.45cm,
+    component/.style={
+        rectangle,
+        draw,
+        rounded corners,
+        align=center,
+        minimum width=2.0cm,
+        minimum height=0.7cm,
+        font=\footnotesize
+    },
+    stream/.style={
+        rectangle,
+        draw,
+        dashed,
+        align=center,
+        minimum width=2.0cm,
+        minimum height=0.6cm,
+        font=\footnotesize
+    },
+    arrow/.style={->, thick}
+]
+
+\node[component] (github) {GitHub API};
+\node[component, below=of github] (crawler) {Metadata\\Crawler};
+\node[stream, below=of crawler] (raw) {Raw Repository\\Stream};
+
+\node[component, below left=0.8cm and 0.45cm of raw] (runner1) {Runner 1\\Enrichment};
+\node[below=1.00cm of raw, font=\Large] (runnerdot) {...};
+\node[component, below right=0.8cm and 0.45cm of raw] (runnern) {Runner $N$\\Enrichment};
+
+\node[stream, below=2.0cm of raw] (processed) {Data\\Stream};
+\node[component, below=of processed] (aggregator) {Aggregator};
+\node[component, below=of aggregator] (results) {Live Q1-Q4\\Results};
+
+\draw[arrow] (github) -- (crawler);
+\draw[arrow] (crawler) -- (raw);
+\draw[arrow] (raw) -- (runner1);
+\draw[arrow] (raw) -- (runnern);
+\draw[arrow] (runner1) -- (processed);
+\draw[arrow] (runnern) -- (processed);
+\draw[arrow] (processed) -- (aggregator);
+\draw[arrow] (aggregator) -- (results);
+
+\end{tikzpicture}
+\caption{High-level architecture of the GitHub analytics system. The crawler
+collects repository metadata, runners enrich the records using additional
+GitHub API requests, and the aggregator continuously updates the analytics
+results.}
+\label{fig:architecture}
 \end{figure}
 
 \subsection{Deployment and Automation}
-% Explain:
-% - Docker containers,
-% - 5-VM layout,
-% - head VM and worker VMs,
-% - cloud-init for VM setup,
-% - Docker Swarm or scripts for automated deployment,
-% - how services can be scaled without manually configuring each VM.
-% - etc.
-
-\subsection{Data Collection}
-% Explain:
-% - how repositories are collected from the GitHub API,
-% - how the last-year search criterion is handled,
-% - how pagination is handled,
-% - how the 1000-result search limit is handled,
-% - how rate limits are handled,
-% - how collected data is saved for repeatable experiments.
-% - etc.
+The system is intended to run across multiple cloud virtual machines using
+containerized services. The master node will host the coordination services,
+while the worker nodes will run the services responsible for data processing.
+Docker is used to containerize each service, while Docker Swarm is used for
+orchestrating these services across a cluster of one Manager and maximum four
+Workers. This deployment model supports scalability experiments by allowing the
+number of runners and the number of worker machines to be changed.
 
 \subsection{Stream Processing with Apache Pulsar}
-% Explain:
-% - crawler acts as producer,
-% - repository records are published to a Pulsar topic,
-% - workers act as consumers
-% - etc.
+Apache Pulsar is used as the streaming layer between the crawler, runners, and
+aggregator. The crawler acts as a producer, while the runners act as both
+consumers and producers. Finally, the aggregator consumes from the runners. As a
+result, the crawler does not need to know how many runners are active, and the
+processing stage can be scaled independently. The streaming layer also helps
+improve locality by distributing records to runners on worker nodes instead of
+using a single centralized enrichment component. Each runner processes its
+assigned records locally and publishes the data back to the stream. This reduces
+unnecessary data movement while allowing more runners or worker machines to be
+added without changing the crawler or aggregator.
 
-\subsection{Storage and Analytics}
-% Explain:
-% - where processed repository metadata is stored,
-% - how analytics are computed,
-% - how plots for Q1--Q4 are generated,
-% - how TOP_K is configurable.
-% - etc.
+
+\subsection{Data Collection}
+The crawler is responsible for collecting repository metadata from the GitHub
+API. Since the GitHub search interface limits the number of results returned by
+a single query, the crawler divides the collection process into smaller queries
+and uses pagination. Crawling can take a significant amount of time,
+particularly for large datasets, and the GitHub API also imposes request limits.
+Re-crawling data for days that have already been collected would therefore be an
+inefficient use of resources. For this reason, collected results are cached on
+disk for each day and reused across runs whenever data for that day is
+needed again. The crawler also removes duplicate repositories before publishing
+records to the stream. This ensures that each repository is processed only once
+by the downstream stages.
+
+The collected metadata provides the initial information needed by the pipeline.
+Some analytics can be derived directly from this metadata, while others require
+additional enrichment through the GitHub API. Therefore, the crawler only performs
+the initial collection step, and the runners are responsible for gathering any
+extra information needed by the later analytics stage.
+
+
+\subsection{Enrichment and Aggregation}
+The runners enrich repository records by retrieving the additional information
+needed for the analytics questions. Commit activity is estimated by querying
+the GitHub commits endpoint, while unit-test and CI/CD indicators are detected
+by checking selected repository paths and configuration files. This avoids
+downloading the full repository while still providing the extra information
+needed for the analytics stage.
+
+To reduce communication overhead, runners can send the data in batches of
+configurable batch size. The aggregator consumes these data and re-evaluates the
+current global answers to the four project questions. Since aggregation is
+performed continuously, the system produces live results that are updated as
+more repositories are processed.
 
 \section{Experiments and Results}
 \label{sec:experiments}
