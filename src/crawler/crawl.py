@@ -6,7 +6,7 @@ import logging
 import os
 import tracemalloc
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -130,7 +130,9 @@ def crawl_window(
                 should_check_memory = config.max_memory_mb is not None
                 if should_log_memory or should_check_memory:
                     _sample_memory(stats, config, log_sample=should_log_memory)
-                yield record
+                # Stamped post-dedup so the timestamp reflects emit time,
+                # not fetch or cache-hit time.
+                yield replace(record, emitted_at=_emit_timestamp())
                 if config.global_limit and stats.emitted >= config.global_limit:
                     return
 
@@ -410,6 +412,11 @@ def _full_day_range(day: str) -> SearchRange:
 
 def _github_datetime(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _emit_timestamp() -> str:
+    """UTC wall-clock ISO-8601 stamp for the emit-time field on records."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _sample_memory(

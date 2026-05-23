@@ -193,6 +193,46 @@ class CrawlerTests(unittest.TestCase):
             self.assertEqual(stats.duplicate_in_slice, 1)
             self.assertEqual(stats.emitted, 2)
 
+    def test_crawl_window_stamps_emitted_at(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config = CrawlConfig(
+                end_date=date(2026, 5, 19),
+                days=1,
+                cache_dir=Path(tmp),
+                log_every=0,
+                memory_log_every=0,
+            )
+            before = datetime.now(timezone.utc)
+            records, _ = crawl_window(FakeClient(), config)  # type: ignore[arg-type]
+            stamps = [record.emitted_at for record in records]
+            after = datetime.now(timezone.utc)
+            # Pin both format (microsecond UTC ISO) and recency: a regression
+            # that emits stale, malformed, or "1970-01-01..." would slip past
+            # a non-None + endswith("Z") check.
+            self.assertEqual(len(stamps), 2)
+            for stamp in stamps:
+                self.assertIsNotNone(stamp)
+                parsed = datetime.strptime(
+                    stamp, "%Y-%m-%dT%H:%M:%S.%fZ"
+                ).replace(tzinfo=timezone.utc)
+                self.assertGreaterEqual(parsed, before)
+                self.assertLessEqual(parsed, after)
+
+    def test_emitted_at_round_trips_through_json(self) -> None:
+        """emitted_at must survive serialization so cache reads and Pulsar
+        messages preserve the emit timestamp the aggregator reads for
+        latency math."""
+        record = _record(1, "owner/repo")
+        stamped = RepoRecord.from_dict(
+            {**record.to_dict(), "emitted_at": "2026-05-23T14:30:00.123456Z"}
+        )
+        revived = RepoRecord.from_json_line(stamped.to_json_line())
+        self.assertEqual(revived.emitted_at, "2026-05-23T14:30:00.123456Z")
+        # A record constructed without emitted_at defaults to None and still
+        # round-trips cleanly.
+        plain = RepoRecord.from_json_line(_record(2, "owner/two").to_json_line())
+        self.assertIsNone(plain.emitted_at)
+
     def test_global_limit_bounds_api_fetch_and_avoids_partial_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cache_dir = Path(tmp)
