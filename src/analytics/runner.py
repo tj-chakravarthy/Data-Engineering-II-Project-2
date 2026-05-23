@@ -11,7 +11,6 @@ import logging
 import time
 
 from analytics.common import config, enrich_repo, is_receive_timeout, should_idle_flush
-from crawler.crawl import load_dotenv
 from crawler.github_client import GitHubClient
 from streaming.pulsar_connection import get_pulsar_client
 
@@ -20,7 +19,6 @@ log = logging.getLogger(__name__)
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    load_dotenv()
     cfg = config()
 
     # Built only when enrichment is on: GitHubClient raises if no tokens exist.

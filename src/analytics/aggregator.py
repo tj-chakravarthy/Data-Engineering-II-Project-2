@@ -12,7 +12,6 @@ import time
 
 from analytics.common import AnalyticsState, config, is_receive_timeout, should_idle_flush
 from analytics.plot_results import plot_aggregate_payload
-from crawler.crawl import load_dotenv
 from streaming.pulsar_connection import get_pulsar_client
 
 log = logging.getLogger(__name__)
@@ -20,7 +19,6 @@ log = logging.getLogger(__name__)
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    load_dotenv()
     cfg = config()
 
     client = get_pulsar_client(cfg["broker_url"], probe_topic=cfg["enriched_topic"])

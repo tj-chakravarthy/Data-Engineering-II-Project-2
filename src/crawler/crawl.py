@@ -445,22 +445,3 @@ def _sample_memory(
             f"peak={peak_kb} KB limit={limit_kb} KB. "
             "Use a smaller date window, lower limits, or rely on cache-backed runs."
         )
-
-
-def load_dotenv(path: Path = Path(".env")) -> None:
-    """Tiny `.env` loader so local runs do not need an extra dependency."""
-    if not path.exists():
-        if path != Path(".env"):
-            return
-        infra_path = Path("scripts/infrastructure/.env")
-        if not infra_path.exists():
-            return
-        path = infra_path
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key = key.strip()
-        value = value.strip().strip('"').strip("'")
-        os.environ.setdefault(key, value)

@@ -39,7 +39,7 @@ from crawler.cli_args import (
     add_rate_limit_args,
     build_crawl_config,
 )
-from crawler.crawl import CrawlStats, crawl_window, load_dotenv
+from crawler.crawl import CrawlStats, crawl_window
 from crawler.github_client import GitHubClient
 from crawler.models import RepoRecord
 from streaming.pulsar_connection import get_pulsar_client
@@ -123,7 +123,6 @@ class PublishCheckpoint:
 def main() -> None:
     args = _parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    load_dotenv()
 
     config = build_crawl_config(args)
     client = GitHubClient(
