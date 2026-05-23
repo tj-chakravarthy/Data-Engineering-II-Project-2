@@ -48,6 +48,14 @@ wait_for_service_replicas() {
     exit 1
 }
 
+env_value() {
+    local key=$1
+    if [ ! -f "$ENV_FILE" ]; then
+        return 0
+    fi
+    grep -E "^${key}=" "$ENV_FILE" | tail -1 | cut -d'=' -f2-
+}
+
 wait_for_service_running_or_completed() {
     local service=$1
     local expected=$2
@@ -145,16 +153,25 @@ mkdir -p /home/ubuntu/data
 echo "  Done"
 echo "Deploying pulsar stack..."
 DEPLOY_STARTED_AT=$(date +%s)
+ANALYTICS_NUM_RUNNERS=${ANALYTICS_NUM_RUNNERS:-$(env_value ANALYTICS_NUM_RUNNERS)}
+ANALYTICS_NUM_RUNNERS=${ANALYTICS_NUM_RUNNERS:-1}
+case "$ANALYTICS_NUM_RUNNERS" in
+    ''|*[!0-9]*|0)
+        echo "ERROR: ANALYTICS_NUM_RUNNERS must be a positive integer."
+        exit 1
+        ;;
+esac
 (
     # apply side-effect only within subshell
     export $(grep -v '^#' "$ENV_FILE" | xargs)
+    export ANALYTICS_NUM_RUNNERS
     export PULSAR_SERVICE_URL="pulsar://$MASTER_IP:6650"
     docker stack deploy --detach=true -c "$STACK_FILE" pulsar
 )
 
 wait_for_service_replicas "pulsar_pulsar" 1
 wait_for_service_running_or_completed "pulsar_crawler" 1
-wait_for_service_replicas "pulsar_analytics" 1
+wait_for_service_replicas "pulsar_analytics" "$ANALYTICS_NUM_RUNNERS"
 # fixed by TJ wait for aggregator before verify so the smoke test can't race startup
 wait_for_service_replicas "pulsar_analytics-aggregator" 1
 DEPLOY_STARTED_AT="$DEPLOY_STARTED_AT" bash "${TARGET_PATH}/verify_swarm_pipeline.sh"

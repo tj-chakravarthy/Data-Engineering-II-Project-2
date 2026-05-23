@@ -60,7 +60,7 @@ services:
     networks:
       - pulsar-net
     deploy:
-      replicas: 1
+      replicas: ${ANALYTICS_NUM_RUNNERS:-1}
       placement:
         constraints:
           - node.labels.analytics == true
@@ -74,7 +74,8 @@ services:
       # fixed by TJ runner only reads RAW_TOPIC and ENRICHED_TOPIC now
       - ENRICHED_TOPIC=${ENRICHED_TOPIC:-repos.enriched}
       - ANALYTICS_SUBSCRIPTION=${ANALYTICS_SUBSCRIPTION}
-      - RUNNER_BATCH_SIZE=${RUNNER_BATCH_SIZE:-${FLUSH_EVERY}}
+      - FLUSH_EVERY=${FLUSH_EVERY:-100}
+      - RUNNER_BATCH_SIZE=${RUNNER_BATCH_SIZE:-}
       - FLUSH_IDLE_SECONDS=${FLUSH_IDLE_SECONDS:-30}
       - ENRICH_GITHUB=${ENRICH_GITHUB}
       - GITHUB_TOKEN_1=${GITHUB_TOKEN_1}
@@ -82,8 +83,8 @@ services:
       - GITHUB_TOKEN_3=${GITHUB_TOKEN_3}
       - GITHUB_TOKEN_4=${GITHUB_TOKEN_4}
       - GITHUB_TOKEN_5=${GITHUB_TOKEN_5}
-      # fixed by TJ stride-slice token partitioning so replicas don't share tokens
-      - RUNNER_ID=${ANALYTICS_RUNNER_ID:-0}
+      # fixed by TJ use Swarm's task slot for disjoint token slices per replica
+      - RUNNER_SLOT={{.Task.Slot}}
       - NUM_RUNNERS=${ANALYTICS_NUM_RUNNERS:-1}
 
   # fixed by TJ added aggregator service
@@ -106,8 +107,8 @@ services:
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
       - ENRICHED_TOPIC=${ENRICHED_TOPIC:-repos.enriched}
       - AGGREGATOR_SUBSCRIPTION=${AGGREGATOR_SUBSCRIPTION:-analytics-aggregator}
-      - TOP_N=${TOP_N}
-      - FLUSH_EVERY=${FLUSH_EVERY}
+      - TOP_N=${TOP_N:-10}
+      - FLUSH_EVERY=${FLUSH_EVERY:-100}
       - FLUSH_IDLE_SECONDS=${FLUSH_IDLE_SECONDS:-30}
       - RESULTS_DIR=/app/data/results
       - FIGURES_DIR=/app/data/figures

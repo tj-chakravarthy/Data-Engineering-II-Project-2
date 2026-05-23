@@ -375,6 +375,35 @@ class TokenPartitionTests(unittest.TestCase):
         # 3 tokens, 2 runners, this is runner 1 → ["y"] only.
         self.assertEqual(tokens_from_env(env), ["y"])
 
+    def test_tokens_from_env_accepts_swarm_task_slot(self) -> None:
+        env = {
+            "GITHUB_TOKEN_1": "x",
+            "GITHUB_TOKEN_2": "y",
+            "GITHUB_TOKEN_3": "z",
+            "NUM_RUNNERS": "2",
+            "RUNNER_SLOT": "2",
+        }
+        # Docker Swarm task slots are one-based, so slot 2 maps to runner_id 1.
+        self.assertEqual(tokens_from_env(env), ["y"])
+
+    def test_tokens_from_env_rejects_invalid_num_runners(self) -> None:
+        env = {
+            "GITHUB_TOKEN_1": "x",
+            "NUM_RUNNERS": "0",
+            "RUNNER_ID": "0",
+        }
+        with self.assertRaises(ValueError):
+            tokens_from_env(env)
+
+    def test_tokens_from_env_rejects_invalid_runner_slot(self) -> None:
+        env = {
+            "GITHUB_TOKEN_1": "x",
+            "NUM_RUNNERS": "1",
+            "RUNNER_SLOT": "0",
+        }
+        with self.assertRaises(ValueError):
+            tokens_from_env(env)
+
     def test_tokens_from_env_orders_by_var_name_for_stable_slice(self) -> None:
         # Insertion order intentionally scrambled: stable slice requires
         # sorting by env-var name so two processes pick the same partition.

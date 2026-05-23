@@ -139,9 +139,9 @@ class GitHubClient:
       partitioning across runners.
     - Omit ``tokens`` and any environment variable whose name starts with
       ``GITHUB_TOKEN`` is included automatically, then stride-sliced by
-      ``RUNNER_ID`` / ``NUM_RUNNERS`` so multiple replicas of the same service
-      own disjoint subsets of the global pool. Single-runner runs (defaults
-      ``RUNNER_ID=0``, ``NUM_RUNNERS=1``) see every token.
+      ``RUNNER_ID`` / ``NUM_RUNNERS``. Swarm deployments may pass the 1-based
+      task slot as ``RUNNER_SLOT`` instead of a zero-based ``RUNNER_ID``.
+      Single-runner runs default to every token.
     """
 
     def __init__(
@@ -352,9 +352,9 @@ def tokens_from_env(environ: Mapping[str, str] | None = None) -> list[str]:
 
     Two replicas of the same service must not share a token: they'd hammer the
     same per-token rate limit and the pool's predictive routing would thrash.
-    The stride slice ``all_tokens[RUNNER_ID::NUM_RUNNERS]`` gives every runner
-    a disjoint subset. Defaults (``RUNNER_ID=0``, ``NUM_RUNNERS=1``) keep
-    single-replica deployments and tests unchanged.
+    The stride slice ``all_tokens[runner_id::NUM_RUNNERS]`` gives every runner
+    a disjoint subset. ``RUNNER_ID`` is zero-based; ``RUNNER_SLOT`` is accepted
+    for Docker Swarm's one-based ``{{.Task.Slot}}`` template.
 
     Tokens are ordered by env-var name for a stable, reproducible slice across
     processes that may have set their env in different orders.
@@ -366,8 +366,8 @@ def tokens_from_env(environ: Mapping[str, str] | None = None) -> list[str]:
         if key.startswith("GITHUB_TOKEN") and value
     )
     all_tokens = [value for _, value in pairs]
-    num_runners = max(_int_or_none(env.get("NUM_RUNNERS")) or 1, 1)
-    runner_id = _int_or_none(env.get("RUNNER_ID")) or 0
+    num_runners = _env_int(env, "NUM_RUNNERS", 1)
+    runner_id = _runner_id_from_env(env)
     return partition_tokens(all_tokens, runner_id, num_runners)
 
 
@@ -431,6 +431,25 @@ def _int_or_none(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _env_int(env: Mapping[str, str], key: str, default: int) -> int:
+    value = env.get(key)
+    if value in (None, ""):
+        return default
+    parsed = _int_or_none(value)
+    if parsed is None:
+        raise ValueError(f"{key} must be an integer, got {value!r}")
+    return parsed
+
+
+def _runner_id_from_env(env: Mapping[str, str]) -> int:
+    if env.get("RUNNER_ID") not in (None, ""):
+        return _env_int(env, "RUNNER_ID", 0)
+    slot = _env_int(env, "RUNNER_SLOT", 1)
+    if slot < 1:
+        raise ValueError(f"RUNNER_SLOT must be >= 1, got {slot}")
+    return slot - 1
 
 
 def _search_metadata_from_payload(query: str, payload: dict[str, Any]) -> SearchMetadata:
