@@ -48,9 +48,8 @@ services:
       - GITHUB_TOKEN_3=${GITHUB_TOKEN_3}
       - GITHUB_TOKEN_4=${GITHUB_TOKEN_4}
       - GITHUB_TOKEN_5=${GITHUB_TOKEN_5}
-      # fixed by TJ stride-slice token partitioning so replicas don't share tokens
-      - RUNNER_ID=${CRAWLER_RUNNER_ID:-0}
-      - NUM_RUNNERS=${CRAWLER_NUM_RUNNERS:-1}
+      - RUNNER_ID=0
+      - NUM_RUNNERS=1
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
       - PULSAR_TOPIC=${PULSAR_TOPIC}
 
@@ -60,7 +59,7 @@ services:
     networks:
       - pulsar-net
     deploy:
-      replicas: ${ANALYTICS_NUM_RUNNERS:-1}
+      replicas: ${ANALYTICS_NUM_RUNNERS}
       placement:
         constraints:
           - node.labels.analytics == true
@@ -71,23 +70,19 @@ services:
     environment:
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
       - RAW_TOPIC=${PULSAR_TOPIC}
-      # fixed by TJ runner only reads RAW_TOPIC and ENRICHED_TOPIC now
-      - ENRICHED_TOPIC=${ENRICHED_TOPIC:-repos.enriched}
+      - ENRICHED_TOPIC=${ENRICHED_TOPIC}
       - ANALYTICS_SUBSCRIPTION=${ANALYTICS_SUBSCRIPTION}
-      - FLUSH_EVERY=${FLUSH_EVERY:-100}
-      - RUNNER_BATCH_SIZE=${RUNNER_BATCH_SIZE:-}
-      - FLUSH_IDLE_SECONDS=${FLUSH_IDLE_SECONDS:-30}
+      - FLUSH_EVERY=${FLUSH_EVERY}
+      - FLUSH_IDLE_SECONDS=${FLUSH_IDLE_SECONDS}
       - ENRICH_GITHUB=${ENRICH_GITHUB}
       - GITHUB_TOKEN_1=${GITHUB_TOKEN_1}
       - GITHUB_TOKEN_2=${GITHUB_TOKEN_2}
       - GITHUB_TOKEN_3=${GITHUB_TOKEN_3}
       - GITHUB_TOKEN_4=${GITHUB_TOKEN_4}
       - GITHUB_TOKEN_5=${GITHUB_TOKEN_5}
-      # fixed by TJ use Swarm's task slot for disjoint token slices per replica
       - RUNNER_SLOT={{.Task.Slot}}
-      - NUM_RUNNERS=${ANALYTICS_NUM_RUNNERS:-1}
+      - NUM_RUNNERS=${ANALYTICS_NUM_RUNNERS}
 
-  # fixed by TJ added aggregator service
   analytics-aggregator:
     image: "${CRAWLER_IMAGE}"
     command: python -m analytics.aggregator
@@ -96,7 +91,6 @@ services:
     deploy:
       replicas: 1
       placement:
-        # fixed by TJ co-locate with runner so they share the host volume
         constraints:
           - node.labels.analytics == true
       restart_policy:
@@ -105,11 +99,11 @@ services:
       - /home/ubuntu/app/data:/app/data
     environment:
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
-      - ENRICHED_TOPIC=${ENRICHED_TOPIC:-repos.enriched}
-      - AGGREGATOR_SUBSCRIPTION=${AGGREGATOR_SUBSCRIPTION:-analytics-aggregator}
-      - TOP_N=${TOP_N:-10}
-      - FLUSH_EVERY=${FLUSH_EVERY:-100}
-      - FLUSH_IDLE_SECONDS=${FLUSH_IDLE_SECONDS:-30}
+      - ENRICHED_TOPIC=${ENRICHED_TOPIC}
+      - AGGREGATOR_SUBSCRIPTION=${AGGREGATOR_SUBSCRIPTION}
+      - TOP_N=${TOP_N}
+      - FLUSH_EVERY=${FLUSH_EVERY}
+      - FLUSH_IDLE_SECONDS=${FLUSH_IDLE_SECONDS}
       - RESULTS_DIR=/app/data/results
       - FIGURES_DIR=/app/data/figures
       - ANALYTICS_STATE_PATH=/app/data/results/analytics_state.json

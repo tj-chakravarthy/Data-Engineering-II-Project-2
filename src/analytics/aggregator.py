@@ -132,6 +132,8 @@ def save_and_plot(state: AnalyticsState, cfg: dict) -> None:
     # Plot failures (font missing, matplotlib backend issue) must not block
     # the ack path: results JSON is already on disk and is the source of truth.
     # A future flush will retry the figures.
+    # TODO: remove plot geenration here. All we need is the JSON file, and we
+    # can generate the plots later.
     try:
         plot_aggregate_payload(results, cfg["figures_dir"])
     except Exception:

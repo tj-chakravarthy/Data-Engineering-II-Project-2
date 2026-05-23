@@ -35,7 +35,6 @@ def config() -> dict:
         "figures_dir": Path(os.getenv("FIGURES_DIR", "data/figures")),
         "state_path": Path(os.getenv("ANALYTICS_STATE_PATH", str(results_dir / "analytics_state.json"))),
         "flush_every": flush_every,
-        "runner_batch_size": _env_int("RUNNER_BATCH_SIZE", flush_every),
         "flush_idle_seconds": _env_int("FLUSH_IDLE_SECONDS", 30),
         "enrich_github": os.getenv("ENRICH_GITHUB", "true").lower() != "false",
         "max_repos": int(os.getenv("MAX_REPOS")) if os.getenv("MAX_REPOS") else None,
@@ -231,7 +230,7 @@ def write_json(path: Path, data) -> None:
     # Write to a temp file and atomically replace, so a crash mid-write never
     # leaves a truncated file — the state file must stay loadable on restart.
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as file:
+    with tmp.open("a", encoding="utf-8") as file:
         json.dump(data, file, indent=2, sort_keys=True)
         file.write("\n")
     tmp.replace(path)

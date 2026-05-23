@@ -3,6 +3,12 @@
 # Run from the Swarm manager after the Pulsar stack is deployed.
 set -e
 
+if [[ $# -ne 1 || $1 == "--help" ]]; then
+    echo "Usage: ./verify_swarm_pipeline.sh <DEPLOY_STARTED_AT>"
+    exit 1
+fi
+DEPLOY_STARTED_AT="$1"
+
 REMOTE_REPO_DIR="/home/ubuntu/app"
 TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure"
 ENV_FILE="${TARGET_PATH}/.env"
@@ -11,7 +17,6 @@ SMOKE_ATTEMPTS=${SMOKE_ATTEMPTS:-30}
 SMOKE_DELAY_SECONDS=${SMOKE_DELAY_SECONDS:-10}
 SMOKE_MIN_RAW_MESSAGES=${SMOKE_MIN_RAW_MESSAGES:-1}
 ANALYTICS_SSH_HOST=${ANALYTICS_SSH_HOST:-w1}
-DEPLOY_STARTED_AT=${DEPLOY_STARTED_AT:-0}
 
 env_value() {
     local key=$1

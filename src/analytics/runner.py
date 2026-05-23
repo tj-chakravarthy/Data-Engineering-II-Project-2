@@ -61,7 +61,7 @@ def main() -> None:
         "analytics runner started raw_topic=%s enriched_topic=%s batch_size=%d enrich_github=%s",
         cfg["raw_topic"],
         cfg["enriched_topic"],
-        cfg["runner_batch_size"],
+        cfg["flush_every"],
         cfg["enrich_github"],
     )
 
@@ -100,7 +100,7 @@ def main() -> None:
                 continue
 
             try:
-                if len(pending_records) >= cfg["runner_batch_size"]:
+                if len(pending_records) >= cfg["flush_every"]:
                     flush_batch()
                     log.info("sent %d enriched raw repo messages", total_received)
 
