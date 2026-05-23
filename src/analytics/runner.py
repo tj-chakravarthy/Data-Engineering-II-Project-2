@@ -1,4 +1,4 @@
-"""Live Pulsar consumer and aggregator for Q1-Q4.
+"""Scalable Pulsar enrichment worker for repository analytics.
 
 Run with:
     PYTHONPATH=src python3 -m analytics.runner
@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 
-from analytics.common import AnalyticsState, config, enrich_repo
+from analytics.common import config, enrich_repo
+from analytics.aggregator import is_receive_timeout, should_idle_flush
 from crawler.crawl import load_dotenv
 from crawler.github_client import GitHubClient
 from streaming.pulsar_connection import get_pulsar_client
@@ -25,109 +27,116 @@ def main() -> None:
     # Built only when enrichment is on: GitHubClient raises if no tokens exist.
     github_client = GitHubClient() if cfg["enrich_github"] else None
 
-    client = get_pulsar_client(cfg["broker_url"], probe_topic=cfg["commits_topic"])
-    consumer = client.subscribe(cfg["raw_topic"], cfg["subscription"])
-    commits_producer = client.create_producer(cfg["commits_topic"])
-    tests_producer = client.create_producer(cfg["tests_topic"])
-    ci_producer = client.create_producer(cfg["ci_topic"])
-    aggregate_producer = client.create_producer(cfg["aggregate_topic"])
+    import pulsar
 
-    # Resume from the last saved state: Pulsar will not redeliver messages it
-    # already acked, so a fresh empty state would silently drop them.
-    state = AnalyticsState.load(cfg["state_path"])
+    client = get_pulsar_client(cfg["broker_url"], probe_topic=cfg["enriched_topic"])
+    consumer = client.subscribe(
+        cfg["raw_topic"],
+        cfg["subscription"],
+        consumer_type=pulsar.ConsumerType.Shared,
+    )
+    enriched_producer = client.create_producer(cfg["enriched_topic"])
+
     total_received = 0
-    pending: list = []
-    saved_once = False
+    pending_messages: list = []
+    pending_records: list[dict] = []
+    last_message_at = time.monotonic()
+    receive_timeout_millis = 1000
 
-    def flush() -> None:
-        nonlocal saved_once
-        # Persist state, then ack. A message is acked only once its work is
-        # durable, so a crash redelivers it instead of dropping it; add_repo
-        # dedupes any redelivered message via state.seen.
-        save_and_publish(state, cfg, aggregate_producer)
-        saved_once = True
-        for processed in pending:
+    def flush_batch() -> None:
+        if not pending_records:
+            return
+        send_enriched_batch(enriched_producer, pending_records)
+        for processed in pending_messages:
             consumer.acknowledge(processed)
-        pending.clear()
+        pending_messages.clear()
+        pending_records.clear()
+
+    def negative_ack_pending() -> None:
+        for processed in pending_messages:
+            consumer.negative_acknowledge(processed)
+        pending_messages.clear()
+        pending_records.clear()
 
     log.info(
-        "analytics consumer started raw_topic=%s top_n=%d enrich_github=%s resumed_repos=%d",
+        "analytics runner started raw_topic=%s enriched_topic=%s batch_size=%d enrich_github=%s",
         cfg["raw_topic"],
-        cfg["top_n"],
+        cfg["enriched_topic"],
+        cfg["runner_batch_size"],
         cfg["enrich_github"],
-        len(state.seen),
     )
 
     try:
         while True:
-            message = consumer.receive()
             try:
+                message = consumer.receive(timeout_millis=receive_timeout_millis)
+            except Exception as exc:
+                if is_receive_timeout(exc):
+                    idle_seconds = time.monotonic() - last_message_at
+                    if should_idle_flush(len(pending_records), idle_seconds, cfg["flush_idle_seconds"]):
+                        try:
+                            batch_size = len(pending_records)
+                            flush_batch()
+                            log.info(
+                                "idle-sent %d enriched records after %.1fs",
+                                batch_size,
+                                idle_seconds,
+                            )
+                        except Exception:
+                            log.exception("failed to publish idle enriched batch; negative acking pending")
+                            negative_ack_pending()
+                    continue
+                raise
+
+            try:
+                last_message_at = time.monotonic()
                 repo = json.loads(message.data().decode("utf-8"))
                 total_received += 1
 
-                is_new = process_repo(
-                    repo,
-                    state,
-                    github_client,
-                    commits_producer,
-                    tests_producer,
-                    ci_producer,
-                )
+                pending_records.append(process_repo(repo, github_client))
+                pending_messages.append(message)
             except Exception:
                 log.exception("failed to process message; negative acking")
                 consumer.negative_acknowledge(message)
                 continue
 
-            pending.append(message)
+            try:
+                if len(pending_records) >= cfg["runner_batch_size"]:
+                    flush_batch()
+                    log.info("sent %d enriched raw repo messages", total_received)
 
-            if (is_new and not saved_once) or len(pending) >= cfg["flush_every"]:
-                flush()
-                log.info(
-                    "processed %d received messages, %d unique repos",
-                    total_received,
-                    len(state.seen),
-                )
-
-            if cfg["max_repos"] and len(state.seen) >= cfg["max_repos"]:
-                break
+                if cfg["max_repos"] and total_received >= cfg["max_repos"]:
+                    flush_batch()
+                    break
+            except Exception:
+                log.exception("failed to publish enriched batch; negative acking pending")
+                negative_ack_pending()
     finally:
-        flush()
+        try:
+            flush_batch()
+        except Exception:
+            log.exception("failed to publish final enriched batch; negative acking pending")
+            negative_ack_pending()
         consumer.close()
-        commits_producer.close()
-        tests_producer.close()
-        ci_producer.close()
-        aggregate_producer.close()
+        enriched_producer.close()
         client.close()
-
-
-def save_and_publish(state: AnalyticsState, cfg: dict, aggregate_producer) -> None:
-    state.save(cfg["results_dir"], cfg["state_path"], cfg["top_n"])
-    send_json(aggregate_producer, state.results(cfg["top_n"]))
 
 
 def process_repo(
     repo: dict,
-    state: AnalyticsState,
     github_client: GitHubClient | None,
-    commits_producer,
-    tests_producer,
-    ci_producer,
-) -> bool:
-    # Skip already-counted repos before enriching: enrich_repo makes many
-    # GitHub calls, and duplicates would otherwise burn rate-limit budget.
-    if int(repo["repo_id"]) in state.seen:
-        return False
-
+) -> dict:
     enrichment = enrich_repo(github_client, repo) if github_client else {}
+    return {
+        **repo,
+        "commit_count": enrichment.get("commit_count"),
+        "has_tests": enrichment.get("has_tests", False),
+        "has_ci": enrichment.get("has_ci", False),
+    }
 
-    # Publish derived records before mutating state. If any send raises, the
-    # raw message is negative-acked and redelivered; state.seen must not cause
-    # the retry to skip derived topics that did not publish yet.
-    send_json(commits_producer, {**repo, "commit_count": enrichment.get("commit_count")})
-    send_json(tests_producer, {**repo, "has_tests": enrichment.get("has_tests", False)})
-    send_json(ci_producer, {**repo, "has_ci": enrichment.get("has_ci", False)})
 
-    return state.add_repo(repo, enrichment)
+def send_enriched_batch(producer, records: list[dict]) -> None:
+    send_json(producer, {"records": records})
 
 
 def send_json(producer, payload: dict) -> None:
