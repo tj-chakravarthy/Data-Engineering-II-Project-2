@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import time
 import json
 import logging
 import os
@@ -130,6 +131,11 @@ class AnalyticsState:
             "tdd_language_counts": dict(self.test_languages),
             "tdd_ci_language_counts": dict(self.test_ci_languages),
         })
+        # Append a timestamped snapshot so the trend over time is observable
+        history_path = results_dir / "results_history.jsonl"
+        with history_path.open("a", encoding="utf-8") as f:
+            json.dump({"timestamp": time.time(), **results}, f, sort_keys=True)
+            f.write("\n")
 
 
 def enrich_repo(client: GitHubClient, repo: dict) -> dict:
@@ -230,7 +236,7 @@ def write_json(path: Path, data) -> None:
     # Write to a temp file and atomically replace, so a crash mid-write never
     # leaves a truncated file — the state file must stay loadable on restart.
     tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("a", encoding="utf-8") as file:
+    with tmp.open("w", encoding="utf-8") as file:
         json.dump(data, file, indent=2, sort_keys=True)
         file.write("\n")
     tmp.replace(path)
