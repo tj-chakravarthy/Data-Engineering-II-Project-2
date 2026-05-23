@@ -163,7 +163,10 @@ def path_matches(client: GitHubClient, full_name: str, paths: list[str], branch:
     for path in paths:
         try:
             response = client.get(f"/repos/{full_name}/contents/{path}", {"ref": branch} if branch else None)
-        except requests.HTTPError:
+        except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            if status != 404:
+                raise
             # 404 = path absent (the common case); try the next path.
             continue
         if not check_test_file or path in {"tests", "test", "spec", "__tests__"}:

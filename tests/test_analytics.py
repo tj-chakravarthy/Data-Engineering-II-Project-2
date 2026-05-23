@@ -6,6 +6,8 @@ from collections import Counter
 import json
 from pathlib import Path
 
+import requests
+
 from analytics.aggregator import (
     enriched_records,
     process_enriched_records,
@@ -13,9 +15,17 @@ from analytics.aggregator import (
     save_and_plot,
     should_idle_flush,
 )
-from analytics.common import AnalyticsState, last_page, top_counter, top_dict
+from analytics.common import (
+    AnalyticsState,
+    commit_count,
+    last_page,
+    path_matches,
+    top_counter,
+    top_dict,
+)
 from analytics.plot_results import plot_aggregate_payload
 from analytics.runner import process_repo, send_enriched_batch
+from crawler.github_client import RateLimitError
 
 
 def _repo(repo_id: int, language: str | None = "Python", full_name: str | None = None) -> dict:
@@ -35,6 +45,36 @@ class FakeProducer:
         if self.fail:
             raise RuntimeError("simulated publish failure")
         self.messages.append(payload)
+
+
+class FakeGitHubClient:
+    def __init__(self, side_effects) -> None:
+        self.side_effects = list(side_effects)
+        self.calls: list[tuple[str, dict | None]] = []
+
+    def get(self, path: str, params: dict | None = None):
+        self.calls.append((path, params))
+        result = self.side_effects.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+
+class FakeResponse:
+    def __init__(self, status_code: int = 200, payload=None, headers=None) -> None:
+        self.status_code = status_code
+        self._payload = [] if payload is None else payload
+        self.headers = headers or {}
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+
+def _http_error(status_code: int) -> requests.HTTPError:
+    response = requests.Response()
+    response.status_code = status_code
+    return requests.HTTPError(response=response)
 
 
 class AnalyticsStateTests(unittest.TestCase):
@@ -301,6 +341,42 @@ class HelperTests(unittest.TestCase):
         header = '<https://api.github.com/repositories/1/commits?per_page=1&page=2>; rel="next"'
         self.assertIsNone(last_page(header))
         self.assertIsNone(last_page(""))
+
+    def test_commit_count_bubbles_rate_limit_for_redelivery(self) -> None:
+        client = FakeGitHubClient([RateLimitError("wait budget exhausted")])
+
+        with self.assertRaises(RateLimitError):
+            commit_count(client, "owner/repo")  # type: ignore[arg-type]
+
+    def test_commit_count_bubbles_network_errors_for_redelivery(self) -> None:
+        client = FakeGitHubClient([requests.ConnectionError("reset")])
+
+        with self.assertRaises(requests.ConnectionError):
+            commit_count(client, "owner/repo")  # type: ignore[arg-type]
+
+    def test_commit_count_treats_empty_repo_as_zero(self) -> None:
+        client = FakeGitHubClient([_http_error(409)])
+
+        self.assertEqual(commit_count(client, "owner/empty"), 0)  # type: ignore[arg-type]
+
+    def test_path_matches_continues_on_absent_paths(self) -> None:
+        client = FakeGitHubClient([_http_error(404), FakeResponse()])
+
+        matched, evidence = path_matches(
+            client,  # type: ignore[arg-type]
+            "owner/repo",
+            ["missing", "tests"],
+            "main",
+        )
+
+        self.assertTrue(matched)
+        self.assertEqual(evidence, "tests")
+
+    def test_path_matches_bubbles_network_errors_for_redelivery(self) -> None:
+        client = FakeGitHubClient([requests.ConnectionError("reset")])
+
+        with self.assertRaises(requests.ConnectionError):
+            path_matches(client, "owner/repo", ["tests"], "main")  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":
