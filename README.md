@@ -122,18 +122,17 @@ Topic layout we're planning for, layered as the brief suggests:
 
 ```text
 repos.raw            # producer writes here
-repos.with_commits   # commit-count enrichment for Q2
-repos.with_tests     # unit-test detection for Q3
-repos.with_ci        # CI/DevOps detection for Q4
-repos.aggregates     # final top-N tables for Q1–Q4
+repos.enriched       # batched per-repo enrichment from scalable runners
 ```
 
 Implemented analytics path:
 
 - `streaming.pulsar_producer` publishes crawler records to `repos.raw`.
-- `analytics.runner` consumes `repos.raw`, dedupes by `repo_id`, enriches each new repository with commit-count, unit-test, and CI evidence, and publishes derived messages to `repos.with_commits`, `repos.with_tests`, and `repos.with_ci`.
-- The same worker writes `data/results/q1_languages.json`, `q2_commits.json`, `q3_tdd_languages.json`, `q4_tdd_ci_languages.json`, and `all_results.json`, then publishes aggregate snapshots to `repos.aggregates`.
+- Multiple `analytics.runner` workers can share the `repos.raw` subscription, enrich repositories with commit-count, unit-test, and CI evidence, and publish batches of complete per-repo messages to `repos.enriched`.
+- One `analytics.aggregator` consumes `repos.enriched`, dedupes each record by `repo_id`, writes `data/results/q1_languages.json`, `q2_commits.json`, `q3_tdd_languages.json`, `q4_tdd_ci_languages.json`, and `all_results.json`, then renders charts into `data/figures`.
 - `TOP_N` controls ranking size at runtime, so top 10 → top 20 does not require source changes.
+- `RUNNER_BATCH_SIZE` controls how many repos each runner enriches before sending one batch to `repos.enriched`; it defaults to `FLUSH_EVERY`.
+- `FLUSH_EVERY` controls how many batch messages the aggregator processes before saving/plotting, and `FLUSH_IDLE_SECONDS` (default 30) flushes pending records when either side goes quiet.
 
 Q2 commits is the expensive part — GitHub's search response doesn't include commit counts, so the analytics worker uses `GET /repos/.../commits?per_page=1` + the `Link: last` pagination header. Q3 and Q4 also require extra content checks for test and CI files.
 
