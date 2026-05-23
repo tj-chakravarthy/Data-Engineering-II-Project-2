@@ -1,0 +1,133 @@
+"""Single Pulsar aggregator for enriched repository analytics.
+
+Run with:
+    PYTHONPATH=src python3 -m analytics.aggregator
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import time
+
+from analytics.common import AnalyticsState, config
+from analytics.plot_results import plot_aggregate_payload
+from crawler.crawl import load_dotenv
+from streaming.pulsar_connection import get_pulsar_client
+
+log = logging.getLogger(__name__)
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    load_dotenv()
+    cfg = config()
+
+    client = get_pulsar_client(cfg["broker_url"], probe_topic=cfg["enriched_topic"])
+    consumer = client.subscribe(cfg["enriched_topic"], cfg["aggregator_subscription"])
+
+    state = AnalyticsState.load(cfg["state_path"])
+    total_received = 0
+    pending: list = []
+    saved_once = False
+    last_flush_at = time.monotonic()
+    last_message_at = last_flush_at
+    receive_timeout_millis = 1000
+
+    def flush() -> None:
+        nonlocal last_flush_at, saved_once
+        save_and_plot(state, cfg)
+        saved_once = True
+        for processed in pending:
+            consumer.acknowledge(processed)
+        pending.clear()
+        last_flush_at = time.monotonic()
+
+    log.info(
+        "analytics aggregator started enriched_topic=%s resumed_repos=%d",
+        cfg["enriched_topic"],
+        len(state.seen),
+    )
+
+    try:
+        while True:
+            try:
+                message = consumer.receive(timeout_millis=receive_timeout_millis)
+            except Exception as exc:
+                if is_receive_timeout(exc):
+                    idle_seconds = time.monotonic() - last_message_at
+                    if should_idle_flush(len(pending), idle_seconds, cfg["flush_idle_seconds"]):
+                        pending_count = len(pending)
+                        flush()
+                        log.info(
+                            "idle-flushed %d pending messages after %.1fs",
+                            pending_count,
+                            idle_seconds,
+                        )
+                    continue
+                raise
+
+            try:
+                last_message_at = time.monotonic()
+                payload = json.loads(message.data().decode("utf-8"))
+                records = enriched_records(payload)
+                total_received += len(records)
+                is_new = process_enriched_records(records, state)
+            except Exception:
+                log.exception("failed to aggregate enriched message; negative acking")
+                consumer.negative_acknowledge(message)
+                continue
+
+            pending.append(message)
+
+            if (is_new and not saved_once) or len(pending) >= cfg["flush_every"]:
+                flush()
+                log.info(
+                    "aggregated %d enriched messages, %d unique repos",
+                    total_received,
+                    len(state.seen),
+                )
+
+            if cfg["max_repos"] and len(state.seen) >= cfg["max_repos"]:
+                break
+    finally:
+        flush()
+        consumer.close()
+        client.close()
+
+
+def process_enriched_repo(repo: dict, state: AnalyticsState) -> bool:
+    return state.add_repo(repo, repo)
+
+
+def process_enriched_records(records: list[dict], state: AnalyticsState) -> bool:
+    added = False
+    for repo in records:
+        added = process_enriched_repo(repo, state) or added
+    return added
+
+
+def enriched_records(payload) -> list[dict]:
+    if isinstance(payload, dict) and isinstance(payload.get("records"), list):
+        return payload["records"]
+    if isinstance(payload, dict):
+        return [payload]
+    raise ValueError("enriched payload must be a repo object or {'records': [...]}")
+
+
+def save_and_plot(state: AnalyticsState, cfg: dict) -> None:
+    state.save(cfg["results_dir"], cfg["state_path"], cfg["top_n"])
+    results = state.results(cfg["top_n"])
+    plot_aggregate_payload(results, cfg["figures_dir"])
+
+
+def should_idle_flush(pending_count: int, idle_seconds: float, flush_idle_seconds: int) -> bool:
+    return pending_count > 0 and flush_idle_seconds > 0 and idle_seconds >= flush_idle_seconds
+
+
+def is_receive_timeout(exc: Exception) -> bool:
+    return "timeout" in exc.__class__.__name__.lower()
+
+
+if __name__ == "__main__":
+    main()

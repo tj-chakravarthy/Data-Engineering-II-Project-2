@@ -3,10 +3,19 @@ from __future__ import annotations
 import tempfile
 import unittest
 from collections import Counter
+import json
 from pathlib import Path
 
+from analytics.aggregator import (
+    enriched_records,
+    process_enriched_records,
+    process_enriched_repo,
+    save_and_plot,
+    should_idle_flush,
+)
 from analytics.common import AnalyticsState, last_page, top_counter, top_dict
-from analytics.runner import process_repo
+from analytics.plot_results import plot_aggregate_payload
+from analytics.runner import process_repo, send_enriched_batch
 
 
 def _repo(repo_id: int, language: str | None = "Python", full_name: str | None = None) -> dict:
@@ -133,26 +142,138 @@ class AnalyticsStateTests(unittest.TestCase):
         self.assertEqual(restored.seen, set())
         self.assertEqual(restored.results(10)["processed_unique_repositories"], 0)
 
-    def test_process_repo_does_not_mark_seen_when_derived_publish_fails(self) -> None:
-        state = AnalyticsState()
-        commits = FakeProducer()
-        tests = FakeProducer(fail=True)
-        ci = FakeProducer()
+    def test_process_repo_returns_one_enriched_record(self) -> None:
         repo = _repo(1, "Python")
 
+        enriched = process_repo(repo, None)
+
+        self.assertEqual(enriched["repo_id"], 1)
+        self.assertIsNone(enriched["commit_count"])
+        self.assertFalse(enriched["has_tests"])
+        self.assertFalse(enriched["has_ci"])
+
+    def test_send_enriched_batch_publishes_records_envelope(self) -> None:
+        producer = FakeProducer()
+        records = [_repo(1, "Python"), _repo(2, "Rust")]
+
+        send_enriched_batch(producer, records)
+
+        self.assertEqual(len(producer.messages), 1)
+        payload = json.loads(producer.messages[0].decode("utf-8"))
+        self.assertEqual(payload, {"records": records})
+
+    def test_send_enriched_batch_raises_when_publish_fails(self) -> None:
+        producer = FakeProducer(fail=True)
+
         with self.assertRaises(RuntimeError):
-            process_repo(repo, state, None, commits, tests, ci)
+            send_enriched_batch(producer, [_repo(1, "Python")])
 
-        self.assertEqual(state.seen, set())
-        self.assertEqual(len(commits.messages), 1)
-        self.assertEqual(len(ci.messages), 0)
+    def test_process_enriched_repo_updates_single_aggregator_state(self) -> None:
+        state = AnalyticsState()
+        repo = {
+            **_repo(1, "Python", "owner/one"),
+            "commit_count": 42,
+            "has_tests": True,
+            "has_ci": True,
+        }
 
-        tests.fail = False
-        self.assertTrue(process_repo(repo, state, None, commits, tests, ci))
+        self.assertTrue(process_enriched_repo(repo, state))
+        self.assertFalse(process_enriched_repo(repo, state))
         self.assertEqual(state.seen, {1})
+        self.assertEqual(state.languages["Python"], 1)
+        self.assertEqual(state.commits["owner/one"], 42)
+        self.assertEqual(state.test_languages["Python"], 1)
+        self.assertEqual(state.test_ci_languages["Python"], 1)
+
+    def test_process_enriched_records_updates_state_from_batch(self) -> None:
+        state = AnalyticsState()
+        records = [
+            {**_repo(1, "Python", "owner/one"), "commit_count": 42},
+            {**_repo(2, "Rust", "owner/two"), "commit_count": 7},
+        ]
+
+        self.assertTrue(process_enriched_records(records, state))
+        self.assertEqual(state.seen, {1, 2})
+        self.assertEqual(state.languages["Python"], 1)
+        self.assertEqual(state.languages["Rust"], 1)
+
+    def test_enriched_records_accepts_batch_and_single_record(self) -> None:
+        record = _repo(1, "Python")
+        batch = {"records": [record]}
+
+        self.assertEqual(enriched_records(batch), [record])
+        self.assertEqual(enriched_records(record), [record])
+
+    def test_enriched_records_rejects_invalid_payload(self) -> None:
+        with self.assertRaises(ValueError):
+            enriched_records(["not", "a", "dict"])
+
+    def test_aggregator_save_and_plot_writes_results_and_plots(self) -> None:
+        state = AnalyticsState()
+        state.add_repo(
+            {
+                **_repo(1, "Python", "owner/one"),
+                "commit_count": 42,
+                "has_tests": True,
+                "has_ci": True,
+            },
+            {
+                "commit_count": 42,
+                "has_tests": True,
+                "has_ci": True,
+            },
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = {
+                "results_dir": Path(tmp) / "results",
+                "figures_dir": Path(tmp) / "figures",
+                "state_path": Path(tmp) / "results" / "analytics_state.json",
+                "top_n": 10,
+            }
+
+            save_and_plot(state, cfg)
+
+            self.assertTrue((cfg["results_dir"] / "all_results.json").exists())
+            self.assertTrue((cfg["figures_dir"] / "q1_languages.png").exists())
+            self.assertTrue((cfg["figures_dir"] / "q2_commits.png").exists())
+            saved = json.loads((cfg["results_dir"] / "all_results.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["processed_unique_repositories"], 1)
+            self.assertEqual(
+                saved["q2_top_projects_by_commits"],
+                [{"name": "owner/one", "count": 42}],
+            )
 
 
 class HelperTests(unittest.TestCase):
+    def test_should_idle_flush_requires_pending_messages_and_elapsed_timeout(self) -> None:
+        self.assertTrue(should_idle_flush(1, 30.0, 30))
+        self.assertFalse(should_idle_flush(0, 30.0, 30))
+        self.assertFalse(should_idle_flush(1, 29.9, 30))
+        self.assertFalse(should_idle_flush(1, 30.0, 0))
+
+    def test_plot_aggregate_payload_writes_q1_to_q4_figures(self) -> None:
+        payload = {
+            "q1_top_languages_by_projects": [{"name": "Python", "count": 2}],
+            "q2_top_projects_by_commits": [{"name": "owner/repo", "count": 42}],
+            "q3_top_languages_with_tests": [{"name": "Python", "count": 1}],
+            "q4_top_languages_with_tests_and_ci": [{"name": "Python", "count": 1}],
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            written = plot_aggregate_payload(payload, Path(tmp))
+
+            self.assertEqual(
+                sorted(path.name for path in written),
+                [
+                    "q1_languages.png",
+                    "q2_commits.png",
+                    "q3_tdd_languages.png",
+                    "q4_tdd_ci_languages.png",
+                ],
+            )
+            for path in written:
+                self.assertTrue(path.exists())
+
     def test_top_counter_sorts_by_count_and_limits(self) -> None:
         counter = Counter({"Python": 5, "Rust": 9, "Go": 1})
 
