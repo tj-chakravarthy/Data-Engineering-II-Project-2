@@ -194,5 +194,5 @@ We're done when:
 - Metadata flows through Pulsar via documented producer + consumers + topics.
 - Q1–Q4 produce quantified answers and graphs.
 - Scalability experiments back up the report claims.
-- The 4-page report is written.
+- The 4 page report is written.
 - The demo explains architecture, results, experiments, and individual contributions.
