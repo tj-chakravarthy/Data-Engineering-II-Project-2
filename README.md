@@ -14,16 +14,16 @@ Assignment PDF: `Project 2 docs/DE-II_project_2-1.pdf`.
 ## Setup
 
 Target environment: Linux (course VMs and team workstations).
+Dependencies:
+- bash
+- python (with venv support)
+- git
+- OpenSSH client
+- OpenStack credentials
 
-```bash
-git clone https://github.com/tj-chakravarthy/Data-Engineering-II-Project-2.git
-cd Data-Engineering-II-Project-2
-python3 -m venv .venv
-source .venv/bin/activate
-pip install requests pulsar-client matplotlib
-```
+To run the application see the [Infrastructure](#infrastructure) section.
 
-Runtime config lives in `scripts/infrastructure/.env`, tracked in the repo. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5` — anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
+Runtime config lives in `scripts/infrastructure/.env`, tracked in the repo. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5`, as anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
 
 ## Running the crawler
 
@@ -99,14 +99,17 @@ Provisioning scripts live in `scripts/infrastructure/`. They use OpenStack + clo
 
 ```bash
 cd scripts/infrastructure
-cp UPPMAX-openrc.sh.template UPPMAX-openrc.sh.ignore
-# Fill in OpenStack values in UPPMAX-openrc.sh.ignore.
+cp UPPMAX-openrc.sh.template UPPMAX-openrc.sh
+# Fill in OpenStack values in UPPMAX-openrc.sh or simply put your openrc file
+# in scripts/infrastructure.
 ./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH>
 ```
+PUBLIC_KEY_NAME: This is the name of the public key found on the SSC.
+PRIVATE_KEY_PATH: This is the path of the corresponding private key used to connect to the SSC.
 
-Open items on the infra side:
+Notes on the infrastructure side:
 
-- Worker count is hard-coded to four; should be configurable.
+- Worker count is hard-coded to four. We always spawn four workers so during the experiments it is much easier to test scalability by just changing the number of replicas or by having workers join/leave the swarm.
 - Floating IP assignment is manual.
 - `run.sh` provisions the VMs and ships the repo to the master; `setup_swarm.sh` deploys the Pulsar/crawler/analytics Swarm stack.
 - `setup_swarm.sh` deploys the image named by `CRAWLER_IMAGE`; run `src/build_and_push.sh` first when the image changes.
