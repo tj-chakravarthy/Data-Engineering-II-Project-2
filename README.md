@@ -112,7 +112,7 @@ Notes on the infrastructure side:
 - Worker count is hard-coded to four. We always spawn four workers so during the experiments it is much easier to test scalability by just changing the number of replicas or by having workers join/leave the swarm.
 - Floating IP assignment is manual.
 - `run.sh` provisions the VMs and ships the repo to the master; `setup_swarm.sh` deploys the Pulsar/crawler/analytics Swarm stack.
-- `setup_swarm.sh` deploys the image named by `CRAWLER_IMAGE`; run `src/build_and_push.sh` first when the image changes.
+- `setup_swarm.sh` deploys the image named by `PULSAR_CLIENT_IMAGE`; run `src/build_and_push.sh` first when the image changes.
 - `setup_swarm.sh` runs `verify_swarm_pipeline.sh` after deployment; rerun it on the master with `bash /home/ubuntu/app/scripts/infrastructure/verify_swarm_pipeline.sh`.
 - A clean-VM reproduction guide still needs a final pass once the full stack is demo-tested.
 
