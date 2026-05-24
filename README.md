@@ -104,12 +104,12 @@ cp UPPMAX-openrc.sh.template UPPMAX-openrc.sh
 # in scripts/infrastructure.
 ./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH>
 ```
-PUBLIC_KEY_NAME: This is the name of the public key found on the SSC.
-PRIVATE_KEY_PATH: This is the path of the corresponding private key used to connect to the SSC.
+- PUBLIC_KEY_NAME: This is the name of the public key found on the SSC.
+- PRIVATE_KEY_PATH: This is the path of the corresponding private key used to connect to the SSC.
 
 Notes on the infrastructure side:
 
-- Worker count is hard-coded to four. We always spawn four workers so during the experiments it is much easier to test scalability by just changing the number of replicas or by having workers join/leave the swarm.
+- Worker count is hard-coded to four. We always spawn four workers so during the experiments it is much easier to test scalability by just changing the number of replicas or by having workers join/leave the swarm. To ssh onto any of the workers from the master VM simply use `ssh group16-woker-x` where _x_ belongs to range 1-4.
 - Floating IP assignment is manual.
 - `run.sh` provisions the VMs and ships the repo to the master; `setup_swarm.sh` deploys the Pulsar/crawler/analytics Swarm stack.
 - `setup_swarm.sh` deploys the image named by `PULSAR_CLIENT_IMAGE`; run `src/build_and_push.sh` first when the image changes.
