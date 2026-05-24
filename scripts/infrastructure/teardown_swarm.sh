@@ -4,7 +4,7 @@
 # After this, setup_swarm.sh can be run again cleanly.
 set -e
 
-WORKERS="w1 w2 w3 w4"
+WORKERS="group16-worker-1 group16-worker-2 group16-worker-3 group16-worker-4"
 
 # -------------------------------------------------------------------
 # 1. Remove the stack (stops and removes all services + networks)
