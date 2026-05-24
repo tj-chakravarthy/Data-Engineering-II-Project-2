@@ -26,6 +26,7 @@ echo "Aggregator is on ${WORKER_NAME} (${WORKER_IP})"
 
 echo "Fetching results into ${LOCAL_RESULTS_DIR}..."
 mkdir -p "${LOCAL_RESULTS_DIR}"
-scp -r "${WORKER_NAME}:${REMOTE_DIR}/results" "${LOCAL_RESULTS_DIR}/"
+
+scp "${WORKER_NAME}:${REMOTE_DIR}/results/*" "${LOCAL_RESULTS_DIR}/"
 
 echo "Done. Results are at ${LOCAL_RESULTS_DIR}"
