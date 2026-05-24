@@ -30,6 +30,7 @@ import logging
 import os
 import threading
 import time
+import requests
 from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
@@ -152,6 +153,11 @@ def main() -> None:
     # left it empty and the stats line logged all zeros.
     counters: dict[str, int] = {}
     try:
+        admin_url = os.environ.get("PULSAR_ADMIN_URL")
+        max_backlog = int(os.environ.get("CRAWLER_MAX_BACKLOG", "1000"))
+        backlog_sleep_seconds = int(os.environ.get("CRAWLER_BACKLOG_SLEEP_SECONDS", "30"))
+        runner_subscription = os.environ.get("ANALYTICS_SUBSCRIPTION", "analytics-q1-q4")
+
         publish_records(
             records,
             producer,
@@ -163,6 +169,10 @@ def main() -> None:
                 _make_publish_logger(args.publish_log_every, args.topic),
             ),
             counters=counters,
+            admin_url=admin_url,
+            max_backlog=max_backlog,
+            backlog_sleep_seconds=backlog_sleep_seconds,
+            runner_subscription=runner_subscription,
         )
     finally:
         flush = getattr(producer, "flush", None)
@@ -193,6 +203,11 @@ def publish_records(
     max_retries: int = 3,
     retry_initial_seconds: float = 0.1,
     counters: dict[str, int] | None = None,
+    admin_url: str | None = None,
+    raw_topic: str = "repos.raw",
+    runner_subscription: str = "analytics-q1-q4",
+    max_backlog: int = 1000,
+    backlog_sleep_seconds: int = 30,
 ) -> dict[str, int]:
     """Publish crawler records via ``send_async`` with bounded retry.
 
@@ -306,6 +321,17 @@ def publish_records(
             raise
 
     for record in records:
+        if admin_url:
+            while True:
+                backlog = _raw_topic_backlog(admin_url, raw_topic, runner_subscription)
+                if backlog is None or backlog < max_backlog:
+                    break
+                log.info(
+                    "backlog=%d >= max_backlog=%d; pausing crawler %ds",
+                    backlog, max_backlog, backlog_sleep_seconds,
+                )
+                time.sleep(backlog_sleep_seconds)
+
         if checkpoint is not None and checkpoint.already_published(record.repo_id):
             with lock:
                 counters["skipped_via_checkpoint"] += 1
@@ -502,6 +528,24 @@ def _parse_args() -> argparse.Namespace:
         help="log every N successfully sent Pulsar messages; set 0 to disable",
     )
     return parser.parse_args()
+
+def _raw_topic_backlog(admin_url: str, topic: str, subscription: str) -> int | None:
+    """Return the backlog size for a subscription on a topic via Pulsar admin API.
+    Returns None if the check fails (network error, topic not yet created, etc.)
+    """
+    try:
+        # topic format: persistent/public/default/<topic-name>
+        url = f"{admin_url}/admin/v2/persistent/public/default/{topic}/stats"
+        response = requests.get(url, timeout=5)
+        if response.status_code != 200:
+            return None
+        stats = response.json()
+        subscriptions = stats.get("subscriptions", {})
+        if subscription not in subscriptions:
+            return None
+        return subscriptions[subscription].get("msgBacklog", 0)
+    except Exception:
+        return None
 
 
 if __name__ == "__main__":

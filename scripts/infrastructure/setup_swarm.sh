@@ -141,8 +141,9 @@ DEPLOY_STARTED_AT=$(date +%s)
     # apply side-effect only within subshell
     export $(grep -v '^#' "$ENV_FILE" | xargs)
     export PULSAR_SERVICE_URL="pulsar://$MASTER_IP:6650"
+    export PULSAR_ADMIN_URL="pulsar://$MASTER_IP:8080"
     docker stack deploy --detach=true -c "$STACK_FILE" pulsar
-
+  
     wait_for_service_replicas "pulsar_pulsar" 1
     wait_for_service_running_or_completed "pulsar_crawler" 1
     wait_for_service_replicas "pulsar_analytics" "$ANALYTICS_NUM_RUNNERS"
