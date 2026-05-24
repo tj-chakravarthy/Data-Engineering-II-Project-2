@@ -157,6 +157,8 @@ def main() -> None:
         max_backlog = int(os.environ.get("CRAWLER_MAX_BACKLOG", "1000"))
         backlog_sleep_seconds = int(os.environ.get("CRAWLER_BACKLOG_SLEEP_SECONDS", "30"))
         runner_subscription = os.environ.get("ANALYTICS_SUBSCRIPTION", "analytics-q1-q4")
+        backlog_enabled = os.environ.get("CRAWLER_BACKLOG_ENABLED",
+                                         "false").lower() == "true"
 
         publish_records(
             records,
@@ -170,9 +172,11 @@ def main() -> None:
             ),
             counters=counters,
             admin_url=admin_url,
+            raw_topic=args.topic,
             max_backlog=max_backlog,
             backlog_sleep_seconds=backlog_sleep_seconds,
             runner_subscription=runner_subscription,
+            backlog_enabled=backlog_enabled,
         )
     finally:
         flush = getattr(producer, "flush", None)
@@ -208,6 +212,7 @@ def publish_records(
     runner_subscription: str = "analytics-q1-q4",
     max_backlog: int = 1000,
     backlog_sleep_seconds: int = 30,
+    backlog_enabled: bool = False,
 ) -> dict[str, int]:
     """Publish crawler records via ``send_async`` with bounded retry.
 
@@ -321,11 +326,21 @@ def publish_records(
             raise
 
     for record in records:
-        if admin_url:
+        if backlog_enabled and admin_url:
             while True:
                 backlog = _raw_topic_backlog(admin_url, raw_topic, runner_subscription)
-                if backlog is None or backlog < max_backlog:
+
+                if backlog is None:
+                    log.info(
+                        "Backlog unavailable for topic=%s subscription=%s; waiting %ds",
+                        raw_topic, runner_subscription, backlog_sleep_seconds,
+                    )
+                    time.sleep(backlog_sleep_seconds)
+                    continue
+
+                if backlog < max_backlog:
                     break
+
                 log.info(
                     "backlog=%d >= max_backlog=%d; pausing crawler %ds",
                     backlog, max_backlog, backlog_sleep_seconds,
@@ -529,22 +544,51 @@ def _parse_args() -> argparse.Namespace:
     )
     return parser.parse_args()
 
+def _topic_admin_path(topic: str) -> str:
+    """Convert a Pulsar topic name to the path expected by the admin API."""
+    if topic.startswith("persistent://"):
+        return topic.removeprefix("persistent://")
+    return f"public/default/{topic}"
+
 def _raw_topic_backlog(admin_url: str, topic: str, subscription: str) -> int | None:
     """Return the backlog size for a subscription on a topic via Pulsar admin API.
     Returns None if the check fails (network error, topic not yet created, etc.)
     """
     try:
         # topic format: persistent/public/default/<topic-name>
-        url = f"{admin_url}/admin/v2/persistent/public/default/{topic}/stats"
+        topic_path = _topic_admin_path(topic)
+        url = f"{admin_url.rstrip('/')}/admin/v2/persistent/{topic_path}/stats"
+
         response = requests.get(url, timeout=5)
         if response.status_code != 200:
+            log.warning(
+                "backlog check failed for topic=%s subscription=%s: status=%s body=%s",
+                topic,
+                subscription,
+                response.status_code,
+                response.text[:200],
+                )
             return None
+
         stats = response.json()
         subscriptions = stats.get("subscriptions", {})
+
         if subscription not in subscriptions:
+            log.info(
+                "subscription %s not found yet on topic %s",
+                subscription,
+                topic,
+                )
             return None
-        return subscriptions[subscription].get("msgBacklog", 0)
+
+        return int(subscriptions[subscription].get("msgBacklog", 0))
+
     except Exception:
+        log.exception(
+            "backlog check failed for topic=%s subscription=%s",
+            topic,
+            subscription,
+        )
         return None
 
 
