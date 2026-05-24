@@ -3,20 +3,20 @@
 # Run from the Swarm manager after the Pulsar stack is deployed.
 set -e
 
-if [[ $# -ne 1 || $1 == "--help" ]]; then
-    echo "Usage: ./verify_swarm_pipeline.sh <DEPLOY_STARTED_AT>"
+if [[ $# -ne 2 || $1 == "--help" ]]; then
+    echo "Usage: ./verify_swarm_pipeline.sh <DEPLOY_STARTED_AT> <AGGREGATOR_HOST>"
     exit 1
 fi
 DEPLOY_STARTED_AT="$1"
+AGGREGATOR_NODE="$2"
 
 REMOTE_REPO_DIR="/home/ubuntu/app"
 TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure"
 ENV_FILE="${TARGET_PATH}/.env"
 RESULTS_DIR="${REMOTE_REPO_DIR}/data/results"
 SMOKE_ATTEMPTS=${SMOKE_ATTEMPTS:-30}
-SMOKE_DELAY_SECONDS=${SMOKE_DELAY_SECONDS:-10}
+SMOKE_DELAY_SECONDS=${SMOKE_DELAY_SECONDS:-15}
 SMOKE_MIN_RAW_MESSAGES=${SMOKE_MIN_RAW_MESSAGES:-1}
-ANALYTICS_SSH_HOST=${ANALYTICS_SSH_HOST:-w1}
 
 env_value() {
     local key=$1
@@ -92,19 +92,19 @@ wait_for_raw_messages() {
     exit 1
 }
 
-wait_for_analytics_results() {
+wait_for_aggregator_results() {
     local host=$1
-    echo "Smoke check: waiting for analytics results on ${host}:${RESULTS_DIR}..."
+    echo "Smoke check: waiting for aggregator results on ${host}:${RESULTS_DIR}..."
     for attempt in $(seq 1 "$SMOKE_ATTEMPTS"); do
         if ssh "$host" "test -s '${RESULTS_DIR}/all_results.json' && [ \$(stat -c %Y '${RESULTS_DIR}/all_results.json') -ge ${DEPLOY_STARTED_AT} ]"; then
-            echo "  Analytics results exist:"
+            echo "  Aggregator results exist:"
             ssh "$host" "ls -lh '${RESULTS_DIR}'"
             return 0
         fi
         echo "  Attempt $attempt/$SMOKE_ATTEMPTS: current-run all_results.json not ready; retrying in ${SMOKE_DELAY_SECONDS}s..."
         sleep "$SMOKE_DELAY_SECONDS"
     done
-    echo "ERROR: analytics did not produce a current-run ${RESULTS_DIR}/all_results.json."
+    echo "ERROR: Aggregator did not produce a current-run ${RESULTS_DIR}/all_results.json."
     print_debug_logs
     exit 1
 }
@@ -117,14 +117,14 @@ if [ -z "$PULSAR_CONTAINER" ]; then
     exit 1
 fi
 
-if ! docker node ls --filter node.label=analytics=true --format '{{.Hostname}}' | grep -q .; then
-    echo "ERROR: no Swarm node has analytics=true label."
+if ! docker node ls --filter node.label=aggregator=true --format '{{.Hostname}}' | grep -q .; then
+    echo "ERROR: no Swarm node has aggregator=true label."
     docker node ls
     exit 1
 fi
 
 TOPIC=$(topic_path)
 wait_for_raw_messages "$PULSAR_CONTAINER" "$TOPIC"
-wait_for_analytics_results "$ANALYTICS_SSH_HOST"
+wait_for_aggregator_results "$AGGREGATOR_NODE"
 
 echo "Swarm pipeline verification passed."

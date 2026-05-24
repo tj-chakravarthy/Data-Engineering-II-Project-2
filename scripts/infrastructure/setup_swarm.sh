@@ -149,7 +149,7 @@ DEPLOY_STARTED_AT=$(date +%s)
     wait_for_service_replicas "pulsar_analytics-aggregator" 1
 )
 
-"${TARGET_PATH}/verify_swarm_pipeline.sh" "$DEPLOY_STARTED_AT"
+"${TARGET_PATH}/verify_swarm_pipeline.sh" "$DEPLOY_STARTED_AT" "$AGGREGATOR_NODE"
 
 # -------------------------------------------------------------------
 # 6. Summary
