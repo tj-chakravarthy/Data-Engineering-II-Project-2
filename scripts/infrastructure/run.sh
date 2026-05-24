@@ -88,4 +88,6 @@ ssh -i "$PRIVATE_KEY_PATH" \
     -o StrictHostKeyChecking=accept-new \
     "ubuntu@${MASTER_IP}" \
     "${TARGET_PATH}/setup_swarm.sh"
-echo "  Ran ${TARGET_PATH}/setup_swarm.sh"
+echo "  Ran $(echo ${TARGET_PATH}/setup_swarm.sh |  sed 's#//*#/#g')"
+
+echo "MASTER VM IP address: $(grep "MASTER_IP" master_info.txt | cut -d'=' -f2)."
