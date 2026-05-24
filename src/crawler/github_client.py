@@ -6,6 +6,7 @@ import logging
 import os
 import threading
 import time
+from random import sample
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -378,7 +379,9 @@ def partition_tokens(all_tokens: list[str], runner_id: int, num_runners: int) ->
 
     partition_tokens = os.environ.get("PARTITION_TOKENS", "true").lower()
     if partition_tokens == "false":
-        return all_tokens
+        # returned a new shuffled array so every runner doesn't start using the
+        # same token
+        return sample(all_tokens, len(all_tokens))
 
     if num_runners < 1:
         raise ValueError(f"NUM_RUNNERS must be >= 1, got {num_runners}")

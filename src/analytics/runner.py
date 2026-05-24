@@ -32,6 +32,7 @@ def main() -> None:
         cfg["analytics_subscription"],
         consumer_type=pulsar.ConsumerType.Shared,
         initial_position=pulsar.InitialPosition.Earliest,
+        receiver_queue_size=cfg["flush_every"] / 10,
     )
     enriched_producer = client.create_producer(cfg["enriched_topic"])
 
