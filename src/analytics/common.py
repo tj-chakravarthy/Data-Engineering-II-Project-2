@@ -29,7 +29,7 @@ def config() -> dict:
         "broker_url": os.getenv("PULSAR_SERVICE_URL", "pulsar://localhost:6650"),
         "raw_topic": os.getenv("RAW_TOPIC", "repos.raw"),
         "enriched_topic": os.getenv("ENRICHED_TOPIC", "repos.enriched"),
-        "subscription": os.getenv("ANALYTICS_SUBSCRIPTION", "analytics-q1-q4"),
+        "analytics_subscription": os.getenv("ANALYTICS_SUBSCRIPTION", "analytics-q1-q4"),
         "aggregator_subscription": os.getenv("AGGREGATOR_SUBSCRIPTION", "analytics-aggregator"),
         "top_n": _env_int("TOP_N", 10),
         "results_dir": results_dir,

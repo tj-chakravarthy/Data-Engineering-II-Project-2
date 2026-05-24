@@ -29,8 +29,9 @@ def main() -> None:
     client = get_pulsar_client(cfg["broker_url"], probe_topic=cfg["enriched_topic"])
     consumer = client.subscribe(
         cfg["raw_topic"],
-        cfg["subscription"],
+        cfg["analytics_subscription"],
         consumer_type=pulsar.ConsumerType.Shared,
+        initial_position=pulsar.InitialPosition.Earliest,
     )
     enriched_producer = client.create_producer(cfg["enriched_topic"])
 
