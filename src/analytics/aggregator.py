@@ -34,7 +34,7 @@ def main() -> None:
 
     def flush() -> None:
         nonlocal last_flush_at, saved_once
-        save_and_plot(state, cfg)
+        save_state(state, cfg)
         saved_once = True
         for processed in pending:
             consumer.acknowledge(processed)
@@ -101,6 +101,7 @@ def main() -> None:
                 break
     finally:
         flush()
+        plot_results(state,cfg)
         consumer.close()
         client.close()
 
@@ -124,14 +125,12 @@ def enriched_records(payload) -> list[dict]:
     raise ValueError("enriched payload must be a repo object or {'records': [...]}")
 
 
-def save_and_plot(state: AnalyticsState, cfg: dict) -> None:
+def save_state(state: AnalyticsState, cfg: dict) -> None:
     state.save(cfg["results_dir"], cfg["state_path"], cfg["top_n"])
+
+
+def plot_results(state: AnalyticsState, cfg: dict) -> None:
     results = state.results(cfg["top_n"])
-    # Plot failures (font missing, matplotlib backend issue) must not block
-    # the ack path: results JSON is already on disk and is the source of truth.
-    # A future flush will retry the figures.
-    # TODO: remove plot geenration here. All we need is the JSON file, and we
-    # can generate the plots later.
     try:
         plot_aggregate_payload(results, cfg["figures_dir"])
     except Exception:
