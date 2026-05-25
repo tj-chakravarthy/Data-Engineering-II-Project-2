@@ -377,8 +377,8 @@ def partition_tokens(all_tokens: list[str], runner_id: int, num_runners: int) ->
     if not all_tokens:
         raise ValueError("No GitHub tokens found")
 
-    partition_tokens = os.environ.get("PARTITION_TOKENS", "true").lower()
-    if partition_tokens == "false":
+    partition_flag = os.environ.get("PARTITION_TOKENS", "true").lower()
+    if partition_flag == "false":
         # returned a new shuffled array so every runner doesn't start using the
         # same token
         return sample(all_tokens, len(all_tokens))

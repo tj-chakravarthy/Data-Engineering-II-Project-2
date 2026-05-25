@@ -117,7 +117,7 @@ if [ -z "$PULSAR_CONTAINER" ]; then
     exit 1
 fi
 
-if ! docker node ls --filter node.label=aggregator=true --format '{{.Hostname}}' | grep -q .; then
+if ! docker node ls --filter label=aggregator=true --format '{{.Hostname}}' | grep -q .; then
     echo "ERROR: no Swarm node has aggregator=true label."
     docker node ls
     exit 1

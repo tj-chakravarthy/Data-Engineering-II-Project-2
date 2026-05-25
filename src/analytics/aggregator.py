@@ -21,8 +21,14 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = config()
 
+    import pulsar
+
     client = get_pulsar_client(cfg["broker_url"], probe_topic=cfg["enriched_topic"])
-    consumer = client.subscribe(cfg["enriched_topic"], cfg["aggregator_subscription"])
+    consumer = client.subscribe(
+        cfg["enriched_topic"],
+        cfg["aggregator_subscription"],
+        initial_position=pulsar.InitialPosition.Earliest,
+    )
 
     state = AnalyticsState.load(cfg["state_path"])
     total_received = 0
@@ -130,8 +136,10 @@ def save_state(state: AnalyticsState, cfg: dict) -> None:
 
 
 def plot_results(state: AnalyticsState, cfg: dict) -> None:
-    results = state.results(cfg["top_n"])
+    # state.results() is inside the try so any unexpected exception is caught
+    # here and does not escape the finally block to suppress the original crash.
     try:
+        results = state.results(cfg["top_n"])
         plot_aggregate_payload(results, cfg["figures_dir"])
     except Exception:
         log.exception("plot_aggregate_payload failed; results JSON is still saved")

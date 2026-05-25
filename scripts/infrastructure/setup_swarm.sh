@@ -117,6 +117,10 @@ echo "  Swarm initialized."
 
 JOIN_TOKEN=$(docker swarm join-token worker -q)
 MASTER_IP=$(hostname -I | awk '{print $1}')
+if [ -z "$JOIN_TOKEN" ] || [ -z "$MASTER_IP" ]; then
+    echo "ERROR: could not obtain swarm join token or master IP."
+    exit 1
+fi
 
 # -------------------------------------------------------------------
 # 4. Join workers
@@ -127,8 +131,14 @@ for worker in $WORKERS; do
     echo "  $worker joined."
 done
 
-AGGREGATOR_NODE=$(echo "$WORKERS" | awk '{print $1}')
-echo "Pinning analytics-aggregator service to worker (node '$AGGREGATOR_NODE')..."
+# SSH alias (for file checks) vs actual hostname (for docker node update).
+AGGREGATOR_SSH_HOST=$(echo "$WORKERS" | awk '{print $1}')
+AGGREGATOR_NODE=$(ssh "$AGGREGATOR_SSH_HOST" hostname)
+if [ -z "$AGGREGATOR_NODE" ]; then
+    echo "ERROR: could not resolve Swarm node name for $AGGREGATOR_SSH_HOST."
+    exit 1
+fi
+echo "Pinning analytics-aggregator service to worker '$AGGREGATOR_SSH_HOST' (node '$AGGREGATOR_NODE')..."
 docker node update --label-add aggregator=true "$AGGREGATOR_NODE"
 echo "  Analytics-aggregator node labeled."
 
@@ -138,8 +148,12 @@ echo "  Analytics-aggregator node labeled."
 echo "Deploying pulsar stack..."
 DEPLOY_STARTED_AT=$(date +%s)
 (
-    # apply side-effect only within subshell
-    export $(grep -v '^#' "$ENV_FILE" | xargs)
+    # set -a / source exports every variable in .env without xargs word-splitting,
+    # which breaks on values containing spaces, $ signs, or special characters.
+    set -a
+    # shellcheck disable=SC1090
+    source "$ENV_FILE"
+    set +a
     export PULSAR_SERVICE_URL="pulsar://$MASTER_IP:6650"
     export PULSAR_ADMIN_URL="http://$MASTER_IP:8080"
     docker stack deploy --detach=true -c "$STACK_FILE" pulsar
@@ -150,7 +164,7 @@ DEPLOY_STARTED_AT=$(date +%s)
     wait_for_service_replicas "pulsar_analytics-aggregator" 1
 )
 
-"${TARGET_PATH}/verify_swarm_pipeline.sh" "$DEPLOY_STARTED_AT" "$AGGREGATOR_NODE"
+"${TARGET_PATH}/verify_swarm_pipeline.sh" "$DEPLOY_STARTED_AT" "$AGGREGATOR_SSH_HOST"
 
 # -------------------------------------------------------------------
 # 6. Summary

@@ -74,5 +74,5 @@ class RepoRecord:
 
     def dedupe_key(self) -> str:
         """Stable key for crawler-owned duplicate detection."""
-        return str(self.repo_id) if self.repo_id else self.full_name.lower()
+        return str(self.repo_id) if self.repo_id is not None else self.full_name.lower()
 

@@ -235,12 +235,10 @@ def publish_records(
     # caller can pass its own dict in and still see the partial counts.
     if counters is None:
         counters = {}
-    counters.update(
-        published=0,
-        publish_failures=0,
-        permanent_failures=0,
-        skipped_via_checkpoint=0,
-    )
+    # setdefault so a caller-supplied dict with partial counts from a previous
+    # run is not zeroed — preserving the crash-recovery contract documented above.
+    for key in ("published", "publish_failures", "permanent_failures", "skipped_via_checkpoint"):
+        counters.setdefault(key, 0)
     lock = threading.Lock()
     completion = threading.Condition(lock)
     in_flight = threading.BoundedSemaphore(max_in_flight)
@@ -296,9 +294,15 @@ def publish_records(
                 counters["publish_failures"] += 1
             if attempt < max_retries:
                 delay = retry_initial_seconds * (2**attempt)
-                if delay > 0:
-                    time.sleep(delay)
-                send_with_retry(record, attempt + 1, release_slot=release_slot)
+                # Dispatch retry to a new thread so Pulsar's I/O callback
+                # thread is released immediately. Sleeping on the callback
+                # thread blocks the entire async I/O loop, stalling ACKs and
+                # heartbeats for all other in-flight records.
+                def _retry(r=record, a=attempt, rs=release_slot, d=delay) -> None:
+                    if d > 0:
+                        time.sleep(d)
+                    send_with_retry(r, a + 1, release_slot=rs)
+                threading.Thread(target=_retry, daemon=True).start()
             else:
                 try:
                     with lock:
