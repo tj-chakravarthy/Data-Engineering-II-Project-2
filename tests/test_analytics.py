@@ -11,9 +11,10 @@ import requests
 
 from analytics.aggregator import (
     enriched_records,
+    plot_results,
     process_enriched_records,
     process_enriched_repo,
-    save_and_plot,
+    save_state,
 )
 from analytics.common import (
     AnalyticsState,
@@ -250,7 +251,7 @@ class AnalyticsStateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             enriched_records(["not", "a", "dict"])
 
-    def test_aggregator_save_and_plot_writes_results_and_plots(self) -> None:
+    def test_aggregator_save_state_and_plot_results_writes_results_and_plots(self) -> None:
         state = AnalyticsState()
         state.add_repo(
             {
@@ -273,7 +274,8 @@ class AnalyticsStateTests(unittest.TestCase):
                 "top_n": 10,
             }
 
-            save_and_plot(state, cfg)
+            save_state(state, cfg)
+            plot_results(state, cfg)
 
             self.assertTrue((cfg["results_dir"] / "all_results.json").exists())
             self.assertTrue((cfg["figures_dir"] / "q1_languages.png").exists())
@@ -285,9 +287,9 @@ class AnalyticsStateTests(unittest.TestCase):
                 [{"name": "owner/one", "count": 42}],
             )
 
-    def test_save_and_plot_swallows_plot_failure_but_writes_results(self) -> None:
-        # Plot failures must not block the aggregator's ack path: results JSON
-        # is the source of truth and is already on disk by the time we plot.
+    def test_plot_results_swallows_plot_failure_but_state_already_written(self) -> None:
+        # Plot failures must not raise: results JSON is the source of truth and
+        # is written by save_state before plot_results is called.
         from unittest import mock
 
         state = AnalyticsState()
@@ -299,11 +301,12 @@ class AnalyticsStateTests(unittest.TestCase):
                 "state_path": Path(tmp) / "results" / "analytics_state.json",
                 "top_n": 10,
             }
+            save_state(state, cfg)
             with mock.patch(
                 "analytics.aggregator.plot_aggregate_payload",
                 side_effect=RuntimeError("matplotlib boom"),
             ):
-                save_and_plot(state, cfg)
+                plot_results(state, cfg)  # must not raise
 
             self.assertTrue((cfg["results_dir"] / "all_results.json").exists())
 

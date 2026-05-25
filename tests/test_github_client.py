@@ -342,17 +342,21 @@ class TokenPartitionTests(unittest.TestCase):
         self.assertEqual(set(slice_a) | set(slice_b), set(all_tokens))
         self.assertEqual(set(slice_a) & set(slice_b), set())
 
-    def test_more_runners_than_tokens_gives_some_runners_nothing(self) -> None:
-        # Empty slice; GitHubClient.__init__ converts this into a clear error
-        # rather than running with zero quota.
+    def test_more_runners_than_tokens_wraps_round_robin(self) -> None:
+        # Over-subscription: when num_runners > len(all_tokens), every runner
+        # still gets one token via modulo so it can make progress.
         self.assertEqual(
             partition_tokens(["a", "b"], runner_id=2, num_runners=3),
-            [],
+            ["a"],  # 2 % 2 == 0 → token "a"
+        )
+        self.assertEqual(
+            partition_tokens(["a", "b"], runner_id=3, num_runners=4),
+            ["b"],  # 3 % 2 == 1 → token "b"
         )
 
     def test_invalid_runner_id_rejected(self) -> None:
-        with self.assertRaises(ValueError):
-            partition_tokens(["a"], runner_id=1, num_runners=1)
+        # Only negative runner_id is rejected; runner_id >= num_runners is
+        # handled by the over-subscription path (modulo wrap) rather than error.
         with self.assertRaises(ValueError):
             partition_tokens(["a"], runner_id=-1, num_runners=1)
 
@@ -425,16 +429,18 @@ class TokenPartitionTests(unittest.TestCase):
             client = GitHubClient()
         self.assertEqual(list(client.pool.tokens), ["x"])
 
-    def test_github_client_empty_slice_raises_with_clear_message(self) -> None:
+    def test_over_subscribed_runner_still_gets_a_token(self) -> None:
+        # With fewer tokens than runners, every runner gets at least one token
+        # via modulo wrap so no runner is left without quota.
         env = {
             "GITHUB_TOKEN_1": "x",
             "NUM_RUNNERS": "2",
             "RUNNER_ID": "1",
         }
         with patch.dict("os.environ", env, clear=True):
-            with self.assertRaises(RuntimeError) as ctx:
-                GitHubClient()
-        self.assertIn("NUM_RUNNERS", str(ctx.exception))
+            client = GitHubClient()
+        # runner_id=1, 1 token → 1 % 1 == 0 → token "x"
+        self.assertEqual(list(client.pool.tokens), ["x"])
 
 
 if __name__ == "__main__":
