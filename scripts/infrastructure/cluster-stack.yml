@@ -72,7 +72,7 @@ services:
     volumes:
       - /home/ubuntu/app/data:/app/data
     environment:
-      - PARTITION_TOKENS={PARTITION_TOKENS}
+      - PARTITION_TOKENS=${PARTITION_TOKENS}
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
       - RAW_TOPIC=${PULSAR_TOPIC}
       - ENRICHED_TOPIC=${ENRICHED_TOPIC}
