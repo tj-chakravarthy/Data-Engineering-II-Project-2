@@ -111,14 +111,18 @@ done
 # -------------------------------------------------------------------
 # 3. Init Docker Swarm on master
 # -------------------------------------------------------------------
-echo "Initializing Docker Swarm on master..."
-docker swarm init
+MASTER_IP=$(hostname -I | awk '{print $1}')
+if [ -z "$MASTER_IP" ]; then
+    echo "ERROR: could not determine master IP."
+    exit 1
+fi
+echo "Initializing Docker Swarm on master (advertise-addr: $MASTER_IP)..."
+docker swarm init --advertise-addr "$MASTER_IP"
 echo "  Swarm initialized."
 
 JOIN_TOKEN=$(docker swarm join-token worker -q)
-MASTER_IP=$(hostname -I | awk '{print $1}')
-if [ -z "$JOIN_TOKEN" ] || [ -z "$MASTER_IP" ]; then
-    echo "ERROR: could not obtain swarm join token or master IP."
+if [ -z "$JOIN_TOKEN" ]; then
+    echo "ERROR: could not obtain swarm join token."
     exit 1
 fi
 

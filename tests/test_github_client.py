@@ -418,6 +418,21 @@ class TokenPartitionTests(unittest.TestCase):
         }
         self.assertEqual(tokens_from_env(env), ["a", "b", "c"])
 
+    def test_tokens_from_env_respects_partition_tokens_flag_in_supplied_env(self) -> None:
+        # PARTITION_TOKENS=false in the explicit env must be honoured even when
+        # os.environ has no such key (or has a different value). Before the fix,
+        # partition_tokens() read os.environ directly and ignored the mapping.
+        env = {
+            "GITHUB_TOKEN_1": "x",
+            "GITHUB_TOKEN_2": "y",
+            "GITHUB_TOKEN_3": "z",
+            "PARTITION_TOKENS": "false",
+        }
+        result = tokens_from_env(env)
+        # PARTITION_TOKENS=false → all tokens returned (shuffled), so the set
+        # must equal the full token pool regardless of order.
+        self.assertEqual(set(result), {"x", "y", "z"})
+
     def test_github_client_uses_partition_from_env(self) -> None:
         env = {
             "GITHUB_TOKEN_1": "x",

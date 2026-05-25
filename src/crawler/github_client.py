@@ -369,15 +369,21 @@ def tokens_from_env(environ: Mapping[str, str] | None = None) -> list[str]:
     all_tokens = [value for _, value in pairs]
     num_runners = _env_int(env, "NUM_RUNNERS", 1)
     runner_id = _runner_id_from_env(env)
-    return partition_tokens(all_tokens, runner_id, num_runners)
+    return partition_tokens(all_tokens, runner_id, num_runners, env=env)
 
 
-def partition_tokens(all_tokens: list[str], runner_id: int, num_runners: int) -> list[str]:
+def partition_tokens(
+    all_tokens: list[str],
+    runner_id: int,
+    num_runners: int,
+    env: Mapping[str, str] | None = None,
+) -> list[str]:
     """Return ``all_tokens[runner_id::num_runners]`` with input validation."""
     if not all_tokens:
         raise ValueError("No GitHub tokens found")
 
-    partition_flag = os.environ.get("PARTITION_TOKENS", "true").lower()
+    _env = env if env is not None else os.environ
+    partition_flag = _env.get("PARTITION_TOKENS", "true").lower()
     if partition_flag == "false":
         # returned a new shuffled array so every runner doesn't start using the
         # same token

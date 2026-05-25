@@ -329,37 +329,42 @@ def publish_records(
             mark_record_done(release_slot)
             raise
 
-    for record in records:
-        if backlog_enabled and admin_url:
-            while True:
-                backlog = _raw_topic_backlog(admin_url, raw_topic, runner_subscription)
+    try:
+        for record in records:
+            if backlog_enabled and admin_url:
+                while True:
+                    backlog = _raw_topic_backlog(admin_url, raw_topic, runner_subscription)
 
-                if backlog is None:
+                    if backlog is None:
+                        log.info(
+                            "Backlog unavailable for topic=%s subscription=%s; waiting %ds",
+                            raw_topic, runner_subscription, backlog_sleep_seconds,
+                        )
+                        time.sleep(backlog_sleep_seconds)
+                        continue
+
+                    if backlog < max_backlog:
+                        break
+
                     log.info(
-                        "Backlog unavailable for topic=%s subscription=%s; waiting %ds",
-                        raw_topic, runner_subscription, backlog_sleep_seconds,
+                        "backlog=%d >= max_backlog=%d; pausing crawler %ds",
+                        backlog, max_backlog, backlog_sleep_seconds,
                     )
                     time.sleep(backlog_sleep_seconds)
-                    continue
 
-                if backlog < max_backlog:
-                    break
-
-                log.info(
-                    "backlog=%d >= max_backlog=%d; pausing crawler %ds",
-                    backlog, max_backlog, backlog_sleep_seconds,
-                )
-                time.sleep(backlog_sleep_seconds)
-
-        if checkpoint is not None and checkpoint.already_published(record.repo_id):
-            with lock:
-                counters["skipped_via_checkpoint"] += 1
-            continue
-        in_flight.acquire()
-        mark_record_started()
-        send_with_retry(record, attempt=0, release_slot=True)
-
-    wait_for_all_records()
+            if checkpoint is not None and checkpoint.already_published(record.repo_id):
+                with lock:
+                    counters["skipped_via_checkpoint"] += 1
+                continue
+            in_flight.acquire()
+            mark_record_started()
+            send_with_retry(record, attempt=0, release_slot=True)
+    finally:
+        # Always drain in-flight records before returning, even when an
+        # exception propagates from send_async or the records iterator.
+        # Without this, daemon retry threads outlive the producer.close()
+        # call in main() and raise on a closed producer.
+        wait_for_all_records()
     producer.flush()
     if checkpoint is not None:
         checkpoint.save()

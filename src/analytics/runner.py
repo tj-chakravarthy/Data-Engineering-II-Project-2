@@ -32,7 +32,7 @@ def main() -> None:
         cfg["analytics_subscription"],
         consumer_type=pulsar.ConsumerType.Shared,
         initial_position=pulsar.InitialPosition.Earliest,
-        receiver_queue_size=max(1, cfg["flush_every"] // 10),
+        receiver_queue_size=max(1, cfg["runner_batch_size"] // 10),
     )
     enriched_producer = client.create_producer(cfg["enriched_topic"])
 
@@ -61,7 +61,7 @@ def main() -> None:
         "analytics runner started raw_topic=%s enriched_topic=%s batch_size=%d enrich_github=%s",
         cfg["raw_topic"],
         cfg["enriched_topic"],
-        cfg["flush_every"],
+        cfg["runner_batch_size"],
         cfg["enrich_github"],
     )
 
@@ -100,7 +100,7 @@ def main() -> None:
                 continue
 
             try:
-                if len(pending_records) >= cfg["flush_every"]:
+                if len(pending_records) >= cfg["runner_batch_size"]:
                     flush_batch()
                     log.info("sent %d enriched raw repo messages", total_received)
 
