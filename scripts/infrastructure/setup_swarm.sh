@@ -4,7 +4,7 @@
 # Assumes: repo is unpacked at /home/ubuntu/app
 set -e
 
-WORKERS="w1 w2 w3 w4"
+WORKERS="group16-worker-1 group16-worker-2 group16-worker-3 group16-worker-4"
 REMOTE_REPO_DIR="/home/ubuntu/app"
 TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure"
 ENV_FILE="${TARGET_PATH}/.env"
@@ -92,9 +92,9 @@ for worker in $WORKERS; do
 done
 echo "  Done."
 
-# The crawler and analytics services keep cache/checkpoint/result files under
-# /app/data, so create the bind-mount source on every possible service node
-# before Swarm starts containers.
+# The crawler and analytics-aggregator services keep cache/checkpoint/result
+# files under /app/data, so create the bind-mount source on every possible
+# service node before Swarm starts containers.
 mkdir -p \
     "${REMOTE_REPO_DIR}/data/cache" \
     "${REMOTE_REPO_DIR}/data/output" \
@@ -127,28 +127,21 @@ for worker in $WORKERS; do
     echo "  $worker joined."
 done
 
-ANALYTICS_SSH_HOST=$(echo "$WORKERS" | awk '{print $1}')
-ANALYTICS_NODE=$(ssh "$ANALYTICS_SSH_HOST" hostname)
-if [ -z "$ANALYTICS_NODE" ]; then
-    echo "ERROR: no Swarm worker node found for analytics placement."
-    exit 1
-fi
-echo "Pinning analytics service to worker '$ANALYTICS_SSH_HOST' (node '$ANALYTICS_NODE')..."
-docker node update --label-add analytics=true "$ANALYTICS_NODE"
-echo "  Analytics node labeled."
+AGGREGATOR_NODE=$(echo "$WORKERS" | awk '{print $1}')
+echo "Pinning analytics-aggregator service to worker (node '$AGGREGATOR_NODE')..."
+docker node update --label-add aggregator=true "$AGGREGATOR_NODE"
+echo "  Analytics-aggregator node labeled."
 
 # -------------------------------------------------------------------
 # 5. Deploy stack and wait for Pulsar standalone to be ready
 # -------------------------------------------------------------------
-echo "Creating '/home/ubuntu/data' directory..."
-mkdir -p /home/ubuntu/data
-echo "  Done"
 echo "Deploying pulsar stack..."
 DEPLOY_STARTED_AT=$(date +%s)
 (
     # apply side-effect only within subshell
     export $(grep -v '^#' "$ENV_FILE" | xargs)
     export PULSAR_SERVICE_URL="pulsar://$MASTER_IP:6650"
+    export PULSAR_ADMIN_URL="http://$MASTER_IP:8080"
     docker stack deploy --detach=true -c "$STACK_FILE" pulsar
 
     wait_for_service_replicas "pulsar_pulsar" 1
@@ -157,7 +150,7 @@ DEPLOY_STARTED_AT=$(date +%s)
     wait_for_service_replicas "pulsar_analytics-aggregator" 1
 )
 
-"${TARGET_PATH}/verify_swarm_pipeline.sh" "$DEPLOY_STARTED_AT"
+"${TARGET_PATH}/verify_swarm_pipeline.sh" "$DEPLOY_STARTED_AT" "$AGGREGATOR_NODE"
 
 # -------------------------------------------------------------------
 # 6. Summary

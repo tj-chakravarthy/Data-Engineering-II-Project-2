@@ -1,20 +1,22 @@
 #!/bin/bash
-set -e
 
-# If $1 is provided, use it. Otherwise, default to 'latest'.
-TAG=${1:-latest}
-
-# Build context is this script's directory (src/); the Dockerfile COPY paths
-# are relative to it. Resolve it so the script works from any working dir.
+# Define SCRIPT_DIR (points to the directory where this script resides)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Building image with tag: $TAG..."
-docker build -f "${SCRIPT_DIR}/Dockerfile" -t "andreashadjoullis1153/crawler:$TAG" "${SCRIPT_DIR}"
+CURRENT_BRANCH=$(git branch --show-current)
+TAG=$(echo "$CURRENT_BRANCH" | tr '/' '-')
+DOCKERHUB_URL="andreashadjoullis1153/pulsar_client"
 
-echo "Logging into Docker Hub..."
-docker login
+echo "Building image using context: ${SCRIPT_DIR}"
+# Build the primary branch tag
+docker build -f "${SCRIPT_DIR}/Dockerfile" -t "${DOCKERHUB_URL}:${TAG}" "${SCRIPT_DIR}"
 
-echo "Pushing image to registry..."
-docker push "andreashadjoullis1153/crawler:$TAG"
+# If the branch is main, additionally tag it as 'latest'
+if [ "$TAG" = "main" ]; then
+    echo "Main branch detected. Also tagging as 'latest'..."
+    docker tag "${DOCKERHUB_URL}:${TAG}" "${DOCKERHUB_URL}:latest"
+    docker push "${DOCKERHUB_URL}:latest"
+fi
 
-echo "Done! Successfully built and pushed andreashadjoullis1153/crawler:$TAG"
+echo "Pushing primary branch image..."
+docker push "${DOCKERHUB_URL}:${TAG}"

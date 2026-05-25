@@ -11,7 +11,6 @@ import logging
 import time
 
 from analytics.common import config, enrich_repo, is_receive_timeout, should_idle_flush
-from crawler.crawl import load_dotenv
 from crawler.github_client import GitHubClient
 from streaming.pulsar_connection import get_pulsar_client
 
@@ -20,7 +19,6 @@ log = logging.getLogger(__name__)
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    load_dotenv()
     cfg = config()
 
     # Built only when enrichment is on: GitHubClient raises if no tokens exist.
@@ -31,8 +29,10 @@ def main() -> None:
     client = get_pulsar_client(cfg["broker_url"], probe_topic=cfg["enriched_topic"])
     consumer = client.subscribe(
         cfg["raw_topic"],
-        cfg["subscription"],
+        cfg["analytics_subscription"],
         consumer_type=pulsar.ConsumerType.Shared,
+        initial_position=pulsar.InitialPosition.Earliest,
+        receiver_queue_size=max(1, cfg["flush_every"] // 10),
     )
     enriched_producer = client.create_producer(cfg["enriched_topic"])
 

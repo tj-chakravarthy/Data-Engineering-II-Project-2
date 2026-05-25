@@ -107,10 +107,10 @@ for instance in instances:
 print("Configuring master SSH access to workers...")
 
 hosts_entries = '\n'.join(
-    f'{ip}  w{i+1}' for i, (name, ip) in enumerate(active_instances)
+    f'{ip}  {name}' for i, (name, ip) in enumerate(active_instances)
 )
 ssh_config_entries = '\n'.join(
-    f'Host w{i+1}\n    HostName {ip}\n    User ubuntu\n    IdentityFile ~/.ssh/cluster_key\n    StrictHostKeyChecking accept-new'
+    f'Host {name}\n    HostName {ip}\n    User ubuntu\n    IdentityFile ~/.ssh/cluster_key\n    StrictHostKeyChecking accept-new'
     for i, (name, ip) in enumerate(active_instances)
 )
 

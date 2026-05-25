@@ -6,6 +6,7 @@ import logging
 import os
 import threading
 import time
+from random import sample
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
@@ -373,13 +374,27 @@ def tokens_from_env(environ: Mapping[str, str] | None = None) -> list[str]:
 
 def partition_tokens(all_tokens: list[str], runner_id: int, num_runners: int) -> list[str]:
     """Return ``all_tokens[runner_id::num_runners]`` with input validation."""
+    if not all_tokens:
+        raise ValueError("No GitHub tokens found")
+
+    partition_tokens = os.environ.get("PARTITION_TOKENS", "true").lower()
+    if partition_tokens == "false":
+        # returned a new shuffled array so every runner doesn't start using the
+        # same token
+        return sample(all_tokens, len(all_tokens))
+
     if num_runners < 1:
         raise ValueError(f"NUM_RUNNERS must be >= 1, got {num_runners}")
-    if runner_id < 0 or runner_id >= num_runners:
+
+    if runner_id < 0:
         raise ValueError(
-            f"RUNNER_ID={runner_id} out of range for NUM_RUNNERS={num_runners}"
+            f"RUNNER_ID={runner_id} cannot be negative"
         )
-    return all_tokens[runner_id::num_runners]
+
+    if num_runners <= len(all_tokens):
+        return all_tokens[runner_id::num_runners]
+
+    return [all_tokens[runner_id % len(all_tokens)]]
 
 
 def _is_rate_limited(response: requests.Response) -> bool:

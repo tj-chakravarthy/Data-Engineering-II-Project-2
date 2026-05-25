@@ -26,7 +26,7 @@ services:
       start_period: 60s
 
   crawler:
-    image: "${CRAWLER_IMAGE}"
+    image: "${PULSAR_CLIENT_IMAGE}"
     command: >
       python -m streaming.pulsar_producer
       --days ${CRAWL_DAYS}
@@ -52,22 +52,27 @@ services:
       - NUM_RUNNERS=1
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
       - PULSAR_TOPIC=${PULSAR_TOPIC}
+      - ANALYTICS_SUBSCRIPTION=${ANALYTICS_SUBSCRIPTION}
+      - PULSAR_ADMIN_URL=${PULSAR_ADMIN_URL}
+      - CRAWLER_MAX_BACKLOG=${CRAWLER_MAX_BACKLOG}
+      - CRAWLER_BACKLOG_SLEEP_SECONDS=${CRAWLER_BACKLOG_SLEEP_SECONDS}
+      - CRAWLER_BACKLOG_ENABLED=${CRAWLER_BACKLOG_ENABLED}
 
   analytics:
-    image: "${CRAWLER_IMAGE}"
+    image: "${PULSAR_CLIENT_IMAGE}"
     command: python -m analytics.runner
     networks:
       - pulsar-net
     deploy:
       replicas: ${ANALYTICS_NUM_RUNNERS}
       placement:
-        constraints:
-          - node.labels.analytics == true
+        constraints: [node.role == worker]
       restart_policy:
         condition: on-failure
     volumes:
       - /home/ubuntu/app/data:/app/data
     environment:
+      - PARTITION_TOKENS=${PARTITION_TOKENS}
       - PULSAR_SERVICE_URL=${PULSAR_SERVICE_URL}
       - RAW_TOPIC=${PULSAR_TOPIC}
       - ENRICHED_TOPIC=${ENRICHED_TOPIC}
@@ -84,7 +89,7 @@ services:
       - NUM_RUNNERS=${ANALYTICS_NUM_RUNNERS}
 
   analytics-aggregator:
-    image: "${CRAWLER_IMAGE}"
+    image: "${PULSAR_CLIENT_IMAGE}"
     command: python -m analytics.aggregator
     networks:
       - pulsar-net
@@ -92,7 +97,7 @@ services:
       replicas: 1
       placement:
         constraints:
-          - node.labels.analytics == true
+          - node.labels.aggregator == true
       restart_policy:
         condition: on-failure
     volumes:
