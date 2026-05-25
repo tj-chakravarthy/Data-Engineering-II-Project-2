@@ -312,22 +312,6 @@ class AnalyticsStateTests(unittest.TestCase):
 
 
 class HelperTests(unittest.TestCase):
-    def test_config_uses_flush_every_when_runner_batch_size_is_blank(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {"FLUSH_EVERY": "25", "RUNNER_BATCH_SIZE": ""},
-            clear=True,
-        ):
-            cfg = config()
-
-        self.assertEqual(cfg["flush_every"], 25)
-        self.assertEqual(cfg["runner_batch_size"], 25)
-
-    def test_config_rejects_non_integer_batch_values(self) -> None:
-        with patch.dict("os.environ", {"RUNNER_BATCH_SIZE": "not-an-int"}, clear=True):
-            with self.assertRaises(ValueError):
-                config()
-
     def test_should_idle_flush_requires_pending_messages_and_elapsed_timeout(self) -> None:
         self.assertTrue(should_idle_flush(1, 30.0, 30))
         self.assertFalse(should_idle_flush(0, 30.0, 30))

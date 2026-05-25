@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import time
 
 from analytics.common import config, enrich_repo, is_receive_timeout, should_idle_flush
@@ -32,7 +33,7 @@ def main() -> None:
         cfg["analytics_subscription"],
         consumer_type=pulsar.ConsumerType.Shared,
         initial_position=pulsar.InitialPosition.Earliest,
-        receiver_queue_size=max(1, cfg["runner_batch_size"] // 10),
+        receiver_queue_size=max(1, cfg["flush_every"] // 10),
     )
     enriched_producer = client.create_producer(cfg["enriched_topic"])
 
@@ -61,7 +62,7 @@ def main() -> None:
         "analytics runner started raw_topic=%s enriched_topic=%s batch_size=%d enrich_github=%s",
         cfg["raw_topic"],
         cfg["enriched_topic"],
-        cfg["runner_batch_size"],
+        cfg["flush_every"],
         cfg["enrich_github"],
     )
 
@@ -100,7 +101,7 @@ def main() -> None:
                 continue
 
             try:
-                if len(pending_records) >= cfg["runner_batch_size"]:
+                if len(pending_records) >= cfg["flush_every"]:
                     flush_batch()
                     log.info("sent %d enriched raw repo messages", total_received)
 
@@ -111,14 +112,32 @@ def main() -> None:
                 log.exception("failed to publish enriched batch; negative acking pending")
                 negative_ack_pending()
     finally:
+        # Each shutdown step is independent: a raising consumer.close() must
+        # not skip enriched_producer.close() / client.close() — leaving those
+        # open ties up broker-side state until the session times out.
+        # The final flush_batch is special: on controlled shutdown a failure
+        # means enriched output was not published, and exiting 0 would hide
+        # that. On crash, the original exception is the more informative
+        # signal — let it propagate.
+        crashed = sys.exc_info()[0] is not None
+        flush_error: Exception | None = None
         try:
             flush_batch()
-        except Exception:
+        except Exception as exc:
             log.exception("failed to publish final enriched batch; negative acking pending")
             negative_ack_pending()
-        consumer.close()
-        enriched_producer.close()
-        client.close()
+            flush_error = exc
+        for step_name, step in (
+            ("close consumer", consumer.close),
+            ("close enriched producer", enriched_producer.close),
+            ("close client", client.close),
+        ):
+            try:
+                step()
+            except Exception:
+                log.exception("runner shutdown step %r failed; continuing", step_name)
+        if flush_error is not None and not crashed:
+            raise flush_error
 
 
 def process_repo(

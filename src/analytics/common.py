@@ -21,6 +21,12 @@ TEST_PATHS = ["tests", "test", "spec", "__tests__", "pytest.ini", "package.json"
 CI_PATHS = [".github/workflows", ".gitlab-ci.yml", ".travis.yml", "Jenkinsfile", ".circleci/config.yml"]
 TEST_WORDS = ["pytest", "unittest", "jest", "junit", "rspec", "go test", "cargo test"]
 
+# Single source of truth for the analytics shared-subscription name. Imported
+# by streaming.pulsar_producer to avoid two literal copies of the default
+# silently drifting apart (the producer reads ANALYTICS_SUBSCRIPTION to know
+# which subscription's backlog to gate on).
+DEFAULT_ANALYTICS_SUBSCRIPTION = "analytics-q1-q4"
+
 
 def config() -> dict:
     results_dir = Path(os.getenv("RESULTS_DIR", "data/results"))
@@ -29,14 +35,13 @@ def config() -> dict:
         "broker_url": os.getenv("PULSAR_SERVICE_URL", "pulsar://localhost:6650"),
         "raw_topic": os.getenv("RAW_TOPIC", "repos.raw"),
         "enriched_topic": os.getenv("ENRICHED_TOPIC", "repos.enriched"),
-        "analytics_subscription": os.getenv("ANALYTICS_SUBSCRIPTION", "analytics-q1-q4"),
+        "analytics_subscription": os.getenv("ANALYTICS_SUBSCRIPTION", DEFAULT_ANALYTICS_SUBSCRIPTION),
         "aggregator_subscription": os.getenv("AGGREGATOR_SUBSCRIPTION", "analytics-aggregator"),
         "top_n": _env_int("TOP_N", 10),
         "results_dir": results_dir,
         "figures_dir": Path(os.getenv("FIGURES_DIR", "data/figures")),
         "state_path": Path(os.getenv("ANALYTICS_STATE_PATH", str(results_dir / "analytics_state.json"))),
         "flush_every": flush_every,
-        "runner_batch_size": _env_int("RUNNER_BATCH_SIZE", flush_every),
         "flush_idle_seconds": _env_int("FLUSH_IDLE_SECONDS", 30),
         "enrich_github": os.getenv("ENRICH_GITHUB", "true").lower() != "false",
         "max_repos": int(os.getenv("MAX_REPOS")) if os.getenv("MAX_REPOS") else None,

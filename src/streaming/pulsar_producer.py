@@ -28,6 +28,7 @@ import argparse
 import json
 import logging
 import os
+import sys
 import threading
 import time
 import requests
@@ -35,6 +36,7 @@ from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
+from analytics.common import DEFAULT_ANALYTICS_SUBSCRIPTION
 from crawler.cli_args import (
     add_crawl_args,
     add_rate_limit_args,
@@ -156,7 +158,7 @@ def main() -> None:
         admin_url = os.environ.get("PULSAR_ADMIN_URL")
         max_backlog = int(os.environ.get("CRAWLER_MAX_BACKLOG", "1000"))
         backlog_sleep_seconds = int(os.environ.get("CRAWLER_BACKLOG_SLEEP_SECONDS", "30"))
-        runner_subscription = os.environ.get("ANALYTICS_SUBSCRIPTION", "analytics-q1-q4")
+        runner_subscription = os.environ.get("ANALYTICS_SUBSCRIPTION", DEFAULT_ANALYTICS_SUBSCRIPTION)
         backlog_enabled = os.environ.get("CRAWLER_BACKLOG_ENABLED",
                                          "false").lower() == "true"
 
@@ -209,7 +211,7 @@ def publish_records(
     counters: dict[str, int] | None = None,
     admin_url: str | None = None,
     raw_topic: str = "repos.raw",
-    runner_subscription: str = "analytics-q1-q4",
+    runner_subscription: str = DEFAULT_ANALYTICS_SUBSCRIPTION,
     max_backlog: int = 1000,
     backlog_sleep_seconds: int = 30,
     backlog_enabled: bool = False,
@@ -301,7 +303,29 @@ def publish_records(
                 def _retry(r=record, a=attempt, rs=release_slot, d=delay) -> None:
                     if d > 0:
                         time.sleep(d)
-                    send_with_retry(r, a + 1, release_slot=rs)
+                    try:
+                        send_with_retry(r, a + 1, release_slot=rs)
+                    except Exception:
+                        # send_async raised synchronously inside this daemon
+                        # thread. mark_record_done already fired in the inner
+                        # except, so logical_in_flight stays balanced, but
+                        # the record is neither published nor counted as a
+                        # permanent failure. Without this, the main thread
+                        # returns with the record silently lost.
+                        with lock:
+                            counters["permanent_failures"] += 1
+                        log.exception(
+                            "retry thread for repo_id=%s raised synchronously on attempt %d; counted as permanent failure",
+                            r.repo_id, a + 1,
+                        )
+                        if on_failure is not None:
+                            try:
+                                on_failure(r)
+                            except Exception:
+                                log.exception(
+                                    "on_failure callback raised for repo_id=%s; continuing",
+                                    r.repo_id,
+                                )
                 threading.Thread(target=_retry, daemon=True).start()
             else:
                 try:
@@ -329,10 +353,18 @@ def publish_records(
             mark_record_done(release_slot)
             raise
 
+    # Cache the most recent "backlog is under threshold" answer so we don't
+    # admin-poll the broker on every record. At publish rates of hundreds/sec
+    # the unconditional per-record poll dominated this loop. TTL is bounded by
+    # backlog_sleep_seconds so a tight gating config still reacts promptly.
+    backlog_check_cache_seconds = min(5.0, float(backlog_sleep_seconds))
+    backlog_ok_until = 0.0
     try:
         for record in records:
             if backlog_enabled and admin_url:
                 while True:
+                    if time.monotonic() < backlog_ok_until:
+                        break  # last poll was OK, still within cache window
                     backlog = _raw_topic_backlog(admin_url, raw_topic, runner_subscription)
 
                     if backlog is None:
@@ -344,6 +376,7 @@ def publish_records(
                         continue
 
                     if backlog < max_backlog:
+                        backlog_ok_until = time.monotonic() + backlog_check_cache_seconds
                         break
 
                     log.info(
@@ -365,9 +398,27 @@ def publish_records(
         # Without this, daemon retry threads outlive the producer.close()
         # call in main() and raise on a closed producer.
         wait_for_all_records()
-    producer.flush()
-    if checkpoint is not None:
-        checkpoint.save()
+        # Persist the work that DID complete before the exception. On crash,
+        # log-and-continue so the original exception (the more informative
+        # signal) propagates. On the success path, a failing flush/save
+        # means user-visible output was lost — propagate so the caller exits
+        # non-zero rather than returning a false "success".
+        crashed = sys.exc_info()[0] is not None
+        persist_error: Exception | None = None
+        try:
+            producer.flush()
+        except Exception as exc:
+            log.exception("producer.flush() during shutdown failed")
+            persist_error = exc
+        if checkpoint is not None:
+            try:
+                checkpoint.save()
+            except Exception as exc:
+                log.exception("checkpoint.save() during shutdown failed")
+                if persist_error is None:
+                    persist_error = exc
+        if persist_error is not None and not crashed:
+            raise persist_error
 
     return counters
 

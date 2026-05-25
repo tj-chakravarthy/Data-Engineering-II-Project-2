@@ -131,8 +131,7 @@ Implemented analytics path:
 - Multiple `analytics.runner` workers can share the `repos.raw` subscription, enrich repositories with commit-count, unit-test, and CI evidence, and publish batches of complete per-repo messages to `repos.enriched`.
 - One `analytics.aggregator` consumes `repos.enriched`, dedupes each record by `repo_id`, writes `data/results/q1_languages.json`, `q2_commits.json`, `q3_tdd_languages.json`, `q4_tdd_ci_languages.json`, and `all_results.json`, then renders charts into `data/figures`.
 - `TOP_N` controls ranking size at runtime, so top 10 → top 20 does not require source changes.
-- `RUNNER_BATCH_SIZE` controls how many repos each runner enriches before sending one batch to `repos.enriched`; it defaults to `FLUSH_EVERY`.
-- `FLUSH_EVERY` controls how many batch messages the aggregator processes before saving/plotting, and `FLUSH_IDLE_SECONDS` (default 30) flushes pending records when either side goes quiet.
+- `FLUSH_EVERY` controls how many records each runner batches before sending to `repos.enriched`, and how many batch messages the aggregator processes before saving/plotting. `FLUSH_IDLE_SECONDS` (default 30) flushes pending records when either side goes quiet.
 
 Q2 commits is the expensive part — GitHub's search response doesn't include commit counts, so the analytics worker uses `GET /repos/.../commits?per_page=1` + the `Link: last` pagination header. Q3 and Q4 also require extra content checks for test and CI files.
 

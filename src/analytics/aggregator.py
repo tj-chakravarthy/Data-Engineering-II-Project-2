@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import time
 
 from analytics.common import AnalyticsState, config, is_receive_timeout, should_idle_flush
@@ -106,10 +107,30 @@ def main() -> None:
             if cfg["max_repos"] and len(state.seen) >= cfg["max_repos"]:
                 break
     finally:
-        flush()
-        plot_results(state,cfg)
-        consumer.close()
-        client.close()
+        # The final flush is the only step that writes user-visible output
+        # (the results JSONs). Losing it silently on a controlled shutdown
+        # (MAX_REPOS, signal) would let the service exit 0 with no results
+        # on disk. On crash, the original exception is more informative
+        # than a chained flush error, so log-and-continue is correct there.
+        # plot_results and close_* are always best-effort.
+        crashed = sys.exc_info()[0] is not None
+        flush_error: Exception | None = None
+        try:
+            flush()
+        except Exception as exc:
+            log.exception("aggregator final flush failed")
+            flush_error = exc
+        for step_name, step in (
+            ("plot results", lambda: plot_results(state, cfg)),
+            ("close consumer", consumer.close),
+            ("close client", client.close),
+        ):
+            try:
+                step()
+            except Exception:
+                log.exception("aggregator shutdown step %r failed; continuing", step_name)
+        if flush_error is not None and not crashed:
+            raise flush_error
 
 
 def process_enriched_repo(repo: dict, state: AnalyticsState) -> bool:
