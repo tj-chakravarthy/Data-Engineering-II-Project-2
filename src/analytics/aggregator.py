@@ -10,6 +10,8 @@ import json
 import logging
 import sys
 import time
+from datetime import date, datetime, timedelta, timezone
+from crawler.crawl import _emit_timestamp
 
 from analytics.common import AnalyticsState, config, is_receive_timeout, should_idle_flush
 from analytics.plot_results import plot_aggregate_payload
@@ -37,7 +39,7 @@ def main() -> None:
     saved_once = False
     last_flush_at = time.monotonic()
     last_message_at = last_flush_at
-    receive_timeout_millis = 1000
+    receive_timeout_millis = 30000
 
     def flush() -> None:
         nonlocal last_flush_at, saved_once
@@ -94,6 +96,9 @@ def main() -> None:
                 consumer.negative_acknowledge(message)
                 continue
 
+            if cfg["prof_mode"] == "true":
+                log_timestamps(payload)
+
             pending.append(message)
 
             if (is_new and not saved_once) or len(pending) >= cfg["flush_every"]:
@@ -134,6 +139,7 @@ def main() -> None:
 
 
 def process_enriched_repo(repo: dict, state: AnalyticsState) -> bool:
+    repo["aggregator_received_at"] = _emit_timestamp()
     return state.add_repo(repo, repo)
 
 
@@ -164,6 +170,21 @@ def plot_results(state: AnalyticsState, cfg: dict) -> None:
         plot_aggregate_payload(results, cfg["figures_dir"])
     except Exception:
         log.exception("plot_aggregate_payload failed; results JSON is still saved")
+
+def log_timestamps(repo: dict, cfg: dict):
+    results_dir = cfg["results_dir"]
+    results_dir.mkdir(parents=True, exist_ok=True)
+    log_path = results_dir / "timstamps_profiling.jsonl"
+    with log_path.open("a", encoding="utf-8") as f:
+        json.dump({
+            "repo_name": repo["full_name"],
+            "crawler_emitted_at": repo["emitted_at"],
+            "runner_received_at": repo["runner_received_at"],
+            "runner_enriched_at": repo["runner_enriched_at"],
+            "runner_enriched_at": repo["runner_enriched_at"],
+            "aggregator_received_at": repo["aggregator_received_at"],
+        }, f)
+        f.write("\n")
 
 
 if __name__ == "__main__":

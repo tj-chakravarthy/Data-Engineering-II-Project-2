@@ -14,6 +14,8 @@ from urllib.parse import parse_qs, urlparse
 import requests
 
 from crawler.github_client import GitHubClient
+from datetime import date, datetime, timedelta, timezone
+from crawler.crawl import _emit_timestamp
 
 log = logging.getLogger(__name__)
 
@@ -45,6 +47,7 @@ def config() -> dict:
         "flush_idle_seconds": _env_int("FLUSH_IDLE_SECONDS", 30),
         "enrich_github": os.getenv("ENRICH_GITHUB", "true").lower() != "false",
         "max_repos": int(os.getenv("MAX_REPOS")) if os.getenv("MAX_REPOS") else None,
+        "prof_mode": os.getenv("PROF_MODE", "false").lower(),
     }
 
 

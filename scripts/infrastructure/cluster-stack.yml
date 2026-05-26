@@ -112,3 +112,4 @@ services:
       - RESULTS_DIR=/app/data/results
       - FIGURES_DIR=/app/data/figures
       - ANALYTICS_STATE_PATH=/app/data/results/analytics_state.json
+      - PROF_MODE=${PROF_MODE}

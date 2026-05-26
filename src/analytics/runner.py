@@ -10,6 +10,8 @@ import json
 import logging
 import sys
 import time
+from datetime import date, datetime, timedelta, timezone
+from crawler.crawl import _emit_timestamp
 
 from analytics.common import config, enrich_repo, is_receive_timeout, should_idle_flush
 from crawler.github_client import GitHubClient
@@ -41,7 +43,7 @@ def main() -> None:
     pending_messages: list = []
     pending_records: list[dict] = []
     last_message_at = time.monotonic()
-    receive_timeout_millis = 1000
+    receive_timeout_millis = 30000
 
     def flush_batch() -> None:
         if not pending_records:
@@ -144,12 +146,16 @@ def process_repo(
     repo: dict,
     github_client: GitHubClient | None,
 ) -> dict:
+    runner_received_at = _emit_timestamp()
     enrichment = enrich_repo(github_client, repo) if github_client else {}
+    runner_enriched_at = _emit_timestamp()
     return {
         **repo,
         "commit_count": enrichment.get("commit_count"),
         "has_tests": enrichment.get("has_tests", False),
         "has_ci": enrichment.get("has_ci", False),
+        "runner_received_at": runner_received_at,
+        "runner_enriched_at": runner_enriched_at,
     }
 
 
