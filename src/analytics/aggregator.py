@@ -97,7 +97,7 @@ def main() -> None:
                 continue
 
             if cfg["prof_mode"] == "true":
-                log_timestamps(payload)
+                log_timestamps(records, cfg)
 
             pending.append(message)
 
@@ -171,20 +171,21 @@ def plot_results(state: AnalyticsState, cfg: dict) -> None:
     except Exception:
         log.exception("plot_aggregate_payload failed; results JSON is still saved")
 
-def log_timestamps(repo: dict, cfg: dict):
+def log_timestamps(records: list[dict], cfg: dict) -> None:
     results_dir = cfg["results_dir"]
     results_dir.mkdir(parents=True, exist_ok=True)
-    log_path = results_dir / "timstamps_profiling.jsonl"
+    log_path = results_dir / "timestamps_profiling.jsonl"
+
     with log_path.open("a", encoding="utf-8") as f:
-        json.dump({
-            "repo_name": repo["full_name"],
-            "crawler_emitted_at": repo["emitted_at"],
-            "runner_received_at": repo["runner_received_at"],
-            "runner_enriched_at": repo["runner_enriched_at"],
-            "runner_enriched_at": repo["runner_enriched_at"],
-            "aggregator_received_at": repo["aggregator_received_at"],
-        }, f)
-        f.write("\n")
+        for repo in records:
+            json.dump({
+                "repo_name": repo.get("full_name"),
+                "crawler_emitted_at": repo.get("emitted_at"),
+                "runner_received_at": repo.get("runner_received_at"),
+                "runner_enriched_at": repo.get("runner_enriched_at"),
+                "aggregator_received_at": repo.get("aggregator_received_at"),
+            }, f, sort_keys=True)
+            f.write("\n")
 
 
 if __name__ == "__main__":
