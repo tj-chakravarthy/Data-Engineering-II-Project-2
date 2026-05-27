@@ -10,7 +10,7 @@ STACK_NAME="pulsar"
 WORKERS=("group16-worker-1" "group16-worker-2" "group16-worker-3" "group16-worker-4")
 
 EXPERIMENT_ID="${EXPERIMENT_ID:-manual}"
-RUN_SECONDS="${RUN_SECONDS:-600}" # 10 min
+RUN_SECONDS="${RUN_SECONDS:-1800}" # 30 min
 
 # Use TMP prefix to avoid .env overriding our values when sourcing
 TMP_ANALYTICS_NUM_RUNNERS="${ANALYTICS_NUM_RUNNERS:-1}"
