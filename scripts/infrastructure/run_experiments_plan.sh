@@ -18,7 +18,7 @@ run_one() {
     NUM_WORKERS="$workers" \
     TOKEN_COUNT="$tokens" \
     FLUSH_EVERY="$batch" \
-    ./scripts/experiments/run_experiment.sh
+    ./run_experiment.sh
 }
 
 # Runner scaling, scale-up order.
