@@ -21,7 +21,7 @@ TMP_FLUSH_EVERY="${FLUSH_EVERY:-20}"
 RESULTS_DIR="${REMOTE_REPO_DIR}/data/results"
 FIGURES_DIR="${REMOTE_REPO_DIR}/data/figures"
 OUTPUT_DIR="${REMOTE_REPO_DIR}/data/output"
-EXPERIMENTS_DIR="${RESULTS_DIR}/experiments/${EXPERIMENT_ID}"
+EXPERIMENTS_DIR="${REMOTE_REPO_DIR}/experiments/${EXPERIMENT_ID}"
 
 MASTER_IP=$(hostname -I | awk '{print $1}')
 
@@ -202,10 +202,10 @@ done
 echo "Saving experiment results..."
 mkdir -p "$EXPERIMENTS_DIR"
 
-cp -f "${RESULTS_DIR}/*/timestamps_profiling.jsonl" "$EXPERIMENTS_DIR/" 2>/dev/null || true
-cp -f "${RESULTS_DIR}/*/results_history.jsonl" "$EXPERIMENTS_DIR/" 2>/dev/null || true
-cp -f "${RESULTS_DIR}/*/all_results.json" "$EXPERIMENTS_DIR/" 2>/dev/null || true
-cp -f "${RESULTS_DIR}/*/analytics_state.json" "$EXPERIMENTS_DIR/" 2>/dev/null || true
+cp -f "${RESULTS_DIR}"/*/timestamps_profiling.jsonl "$EXPERIMENTS_DIR/"
+cp -f "${RESULTS_DIR}"/*/results_history.jsonl "$EXPERIMENTS_DIR/"
+cp -f "${RESULTS_DIR}"/*/all_results.json "$EXPERIMENTS_DIR/"
+cp -f "${RESULTS_DIR}"/*/analytics_state.json "$EXPERIMENTS_DIR/"
 
 cat > "${EXPERIMENTS_DIR}/experiment_config.json" <<EOF
 {
