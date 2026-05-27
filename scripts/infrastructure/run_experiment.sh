@@ -21,7 +21,7 @@ TMP_FLUSH_EVERY="${FLUSH_EVERY:-20}"
 RESULTS_DIR="${REMOTE_REPO_DIR}/data/results"
 FIGURES_DIR="${REMOTE_REPO_DIR}/data/figures"
 OUTPUT_DIR="${REMOTE_REPO_DIR}/data/output"
-EXPERIMENTS_DIR="${REMOTE_REPO_DIR}/experiments/${EXPERIMENT_ID}"
+EXPERIMENTS_DIR="${REMOTE_REPO_DIR}/data/experiments/${EXPERIMENT_ID}"
 
 MASTER_IP=$(hostname -I | awk '{print $1}')
 
