@@ -173,17 +173,25 @@ sleep "${DRAIN_SECONDS:-30}"
 echo "Removing stack..."
 docker stack rm "$STACK_NAME"
 
+echo "Waiting for old stack services and networks to disappear..."
 for attempt in $(seq 1 60); do
-    remaining=$(docker service ls --filter label=com.docker.stack.namespace="$STACK_NAME" -q 2>/dev/null)
+    remaining_services=$(docker service ls \
+        --filter label=com.docker.stack.namespace=pulsar \
+        -q 2>/dev/null || true)
 
-    if [ -z "$remaining" ]; then
-        echo "  Stack removed."
+    remaining_networks=$(docker network ls \
+        --filter label=com.docker.stack.namespace=pulsar \
+        -q 2>/dev/null || true)
+
+    if [ -z "$remaining_services" ] && [ -z "$remaining_networks" ]; then
+        echo "Old stack removed."
         break
     fi
 
-    echo "  Waiting for stack removal... attempt $attempt/60"
+    echo "Still removing old stack... attempt $attempt/60"
     sleep 5
 done
+
 
 # ------------------------------------------------------------
 # 9. Save experiment results.
@@ -191,10 +199,12 @@ done
 echo "Saving experiment results..."
 mkdir -p "$EXPERIMENTS_DIR"
 
-cp -f "${RESULTS_DIR}/timestamps_profiling.jsonl" "$EXPERIMENTS_DIR/" 2>/dev/null || true
-cp -f "${RESULTS_DIR}/results_history.jsonl" "$EXPERIMENTS_DIR/" 2>/dev/null || true
-cp -f "${RESULTS_DIR}/all_results.json" "$EXPERIMENTS_DIR/" 2>/dev/null || true
-cp -f "${RESULTS_DIR}/analytics_state.json" "$EXPERIMENTS_DIR/" 2>/dev/null || true
+"${REMOTE_REPO_DIR}/scripts/process_results/fetch_results.sh"
+
+cp -f "${RESULTS_DIR}/*/timestamps_profiling.jsonl" "$EXPERIMENTS_DIR/" 2>/dev/null || true
+cp -f "${RESULTS_DIR}/*/results_history.jsonl" "$EXPERIMENTS_DIR/" 2>/dev/null || true
+cp -f "${RESULTS_DIR}/*/all_results.json" "$EXPERIMENTS_DIR/" 2>/dev/null || true
+cp -f "${RESULTS_DIR}/*/analytics_state.json" "$EXPERIMENTS_DIR/" 2>/dev/null || true
 
 cat > "${EXPERIMENTS_DIR}/experiment_config.json" <<EOF
 {
