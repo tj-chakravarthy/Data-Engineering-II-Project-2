@@ -266,41 +266,86 @@ more repositories are processed.
 % - correctness of Q1--Q4 analytics.
 
 \subsection{GitHub Analytics Results}
-% Present the required analytics:
-%
-% Q1. Top 10 programming languages by number of repositories.
-% Q2. Top 10 most frequently updated repositories.
-% Q3. Top 10 programming languages with unit tests.
-% Q4. Top 10 programming languages with both unit tests and CI.
 
-%\begin{figure}[!t]
-%    \centering
-%    \includegraphics[width=\linewidth]{figures/top_languages.pdf}
-%    \caption{Top 10 programming languages by number of repositories.}
-%    \label{fig:top-languages}
-%\end{figure}
-%
-%\begin{figure}[!t]
-%    \centering
-%    \includegraphics[width=\linewidth]{figures/top_commits.pdf}
-%    \caption{Top 10 most frequently updated repositories.}
-%    \label{fig:top-commits}
-%\end{figure}
-%
-%\begin{figure}[!t]
-%    \centering
-%    \includegraphics[width=\linewidth]{figures/top_test_languages.pdf}
-%    \caption{Top 10 programming languages by number of repositories with unit tests.}
-%    \label{fig:top-tests}
-%\end{figure}
-%
-%\begin{figure}[!t]
-%    \centering
-%    \includegraphics[width=\linewidth]{figures/top_test_ci_languages.pdf}
-%    \caption{Top 10 programming languages by number of repositories with both unit tests and CI.}
-%    \label{fig:top-tests-ci}
-%\end{figure}
+\subsubsection{Q1: Top Languages by Repository Count}
+Figure~\ref{fig:q1} shows the top 10 languages by repository count.
+HTML (14,367) and Python (9,421) lead among named languages, followed
+by JavaScript (7,858) and TypeScript (6,163). The top entry,
+\textit{Unknown} (26,162), represents repositories with no detected
+primary language. Web-facing languages collectively dominate, consistent
+with GitHub's general project population.
 
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/q1_languages.png}
+    \caption{Top 10 programming languages by repository count ($n=78{,}110$).}
+    \label{fig:q1}
+\end{figure}
+
+\subsubsection{Q2: Most Frequently Updated Repositories}
+Figure~\ref{fig:q2} shows the top 10 repositories by commit count. The
+leading entries are kernel forks and mirrors whose histories aggregate
+upstream contributions over many years, with the top two exceeding
+800,000 commits each. This reflects a known characteristic of GitHub
+data: mirrors appear disproportionately active under raw commit metrics.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/q2_commits.png}
+    \caption{Top 10 repositories by total commit count ($n=78{,}110$).}
+    \label{fig:q2}
+\end{figure}
+
+\subsubsection{Q3: Languages with Test-Driven Development}
+Figure~\ref{fig:q3} shows the top 10 languages by repositories containing
+test files. Python leads with 1,293 repositories (1.66\%), followed by
+TypeScript (680) and JavaScript (595). Blade (271) and Dart (262) also
+rank highly, reflecting strong testing cultures in the Laravel and Flutter
+ecosystems respectively. Overall TDD adoption is low across the dataset.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/q3_tdd.png}
+    \caption{Top 10 languages by TDD adoption ($n=78{,}110$).}
+    \label{fig:q3}
+\end{figure}
+
+\subsubsection{Q4: Languages with TDD and CI/DevOps}
+Figure~\ref{fig:q4} shows languages combining test files with CI/CD
+configuration. Python (416), TypeScript (214), and JavaScript (185)
+lead. Only 32.2\% of TDD Python repositories also configure CI,
+showing that automated testing and CI pipelines do not always co-occur.
+Rust (32) appears here despite being absent from the Q3 top 10,
+suggesting Rust projects that test are particularly likely to adopt CI.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/q4_tdd_ci.png}
+    \caption{Top 10 languages by combined TDD and CI/DevOps adoption ($n=78{,}110$).}
+    \label{fig:q4}
+\end{figure}
+
+\subsubsection{Aggregator Convergence}
+Figure~\ref{fig:trend_q1} tracks Q1 language ranks across 415 snapshots.
+All languages stabilised within the first 1,000 repositories (1.3\% of
+the dataset) and held their final rank for the remaining 77,000+.
+Figure~\ref{fig:trend_q34} shows Q3 and Q4 counts growing near-linearly,
+confirming that repositories with tests and CI are evenly distributed
+across the crawled time range with no temporal clustering.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/trend_q1_rank_stability.png}
+    \caption{Q1 language ranks stabilise within the first 1,000 repositories.}
+    \label{fig:trend_q1}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\linewidth]{figures/trend_q3_q4_convergence.png}
+    \caption{Cumulative Q3 (left) and Q4 (right) counts over the full run.}
+    \label{fig:trend_q34}
+\end{figure}
 \subsection{Experiment 1}
 \subsection{Experiment 2}
 ...
