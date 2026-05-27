@@ -170,6 +170,9 @@ docker service scale "${STACK_NAME}_crawler=0" || true
 echo "Giving runners time to flush and acknowledge pending work..."
 sleep "${DRAIN_SECONDS:-30}"
 
+# fetch results before shutting down the stack
+"${REMOTE_REPO_DIR}/scripts/process-results/fetch_results.sh"
+
 echo "Removing stack..."
 docker stack rm "$STACK_NAME"
 
@@ -198,8 +201,6 @@ done
 # ------------------------------------------------------------
 echo "Saving experiment results..."
 mkdir -p "$EXPERIMENTS_DIR"
-
-"${REMOTE_REPO_DIR}/scripts/process_results/fetch_results.sh"
 
 cp -f "${RESULTS_DIR}/*/timestamps_profiling.jsonl" "$EXPERIMENTS_DIR/" 2>/dev/null || true
 cp -f "${RESULTS_DIR}/*/results_history.jsonl" "$EXPERIMENTS_DIR/" 2>/dev/null || true
