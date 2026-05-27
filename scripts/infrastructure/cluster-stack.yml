@@ -66,7 +66,8 @@ services:
     deploy:
       replicas: ${ANALYTICS_NUM_RUNNERS}
       placement:
-        constraints: [node.role == worker]
+        constraints:
+          - node.labels.analytics_worker == true
       restart_policy:
         condition: on-failure
     volumes:

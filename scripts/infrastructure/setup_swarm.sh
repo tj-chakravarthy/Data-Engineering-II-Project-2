@@ -135,6 +135,24 @@ for worker in $WORKERS; do
     echo "  $worker joined."
 done
 
+# -------------------------------------------------------------------
+# 5. Disable all workers by default
+# -------------------------------------------------------------------
+echo "Labeling worker nodes..."
+index=1
+
+for worker in $WORKERS; do
+    node_name=$(ssh "$worker" hostname)
+
+    docker node update --label-add "worker_index=${index}" "$node_name"
+    docker node update --label-add "analytics_worker=false" "$node_name"
+
+    echo "  $worker -> node=$node_name worker_index=$index"
+
+    index=$((index + 1))
+done
+
+
 # SSH alias (for file checks) vs actual hostname (for docker node update).
 AGGREGATOR_SSH_HOST=$(echo "$WORKERS" | awk '{print $1}')
 AGGREGATOR_NODE=$(ssh "$AGGREGATOR_SSH_HOST" hostname)
@@ -149,36 +167,36 @@ echo "  Analytics-aggregator node labeled."
 # -------------------------------------------------------------------
 # 5. Deploy stack and wait for Pulsar standalone to be ready
 # -------------------------------------------------------------------
-echo "Deploying pulsar stack..."
-DEPLOY_STARTED_AT=$(date +%s)
-(
-    # set -a / source exports every variable in .env without xargs word-splitting,
-    # which breaks on values containing spaces, $ signs, or special characters.
-    set -a
-    # shellcheck disable=SC1090
-    source "$ENV_FILE"
-    set +a
-    export PULSAR_SERVICE_URL="pulsar://$MASTER_IP:6650"
-    export PULSAR_ADMIN_URL="http://$MASTER_IP:8080"
-    docker stack deploy --detach=true -c "$STACK_FILE" pulsar
-
-    wait_for_service_replicas "pulsar_pulsar" 1
-    wait_for_service_running_or_completed "pulsar_crawler" 1
-    wait_for_service_replicas "pulsar_analytics" "$ANALYTICS_NUM_RUNNERS"
-    wait_for_service_replicas "pulsar_analytics-aggregator" 1
-)
-
-"${TARGET_PATH}/verify_swarm_pipeline.sh" "$DEPLOY_STARTED_AT" "$AGGREGATOR_SSH_HOST"
+# echo "Deploying pulsar stack..."
+# DEPLOY_STARTED_AT=$(date +%s)
+# (
+#     # set -a / source exports every variable in .env without xargs word-splitting,
+#     # which breaks on values containing spaces, $ signs, or special characters.
+#     set -a
+#     # shellcheck disable=SC1090
+#     source "$ENV_FILE"
+#     set +a
+#     export PULSAR_SERVICE_URL="pulsar://$MASTER_IP:6650"
+#     export PULSAR_ADMIN_URL="http://$MASTER_IP:8080"
+#     docker stack deploy --detach=true -c "$STACK_FILE" pulsar
+#
+#     wait_for_service_replicas "pulsar_pulsar" 1
+#     wait_for_service_running_or_completed "pulsar_crawler" 1
+#     wait_for_service_replicas "pulsar_analytics" "$ANALYTICS_NUM_RUNNERS"
+#     wait_for_service_replicas "pulsar_analytics-aggregator" 1
+# )
+#
+# "${TARGET_PATH}/verify_swarm_pipeline.sh" "$DEPLOY_STARTED_AT" "$AGGREGATOR_SSH_HOST"
 
 # -------------------------------------------------------------------
 # 6. Summary
 # -------------------------------------------------------------------
 echo ""
-echo "==== Deployment complete ===="
+echo "==== Swarm setup complete ===="
 echo ""
 docker node ls
-echo ""
-docker service ls
-echo ""
-echo "Pulsar broker:  pulsar://${MASTER_IP}:6650"
-echo "Admin API:      http://${MASTER_IP}:8080"
+# echo ""
+# docker service ls
+# echo ""
+# echo "Pulsar broker:  pulsar://${MASTER_IP}:6650"
+# echo "Admin API:      http://${MASTER_IP}:8080"

@@ -9,40 +9,43 @@ TARGET_PATH="${REMOTE_REPO_DIR}/scripts/infrastructure/"
 LOCAL_REPO_ROOT="$(git rev-parse --show-toplevel)"
 LOCAL_ENV_FILE="${LOCAL_REPO_ROOT}/scripts/infrastructure/.env"
 
-if [[ $# -ne 2 || $1 == "--help" ]]; then
-    echo "Usage: ./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH>"
+if [[ $# -ne 3 || $1 == "--help" ]]; then
+    echo "Usage: ./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH> <CREATE_VMS>"
     exit 1
 fi
 
 PUBLIC_KEY_NAME="$1"
 PRIVATE_KEY_PATH="$2"
+CREATE_VMS="$3"
 
 if [ ! -f "$LOCAL_ENV_FILE" ]; then
     echo "ERROR: missing runtime config at $LOCAL_ENV_FILE"
     exit 1
 fi
 
-echo "Sourcing 'UPPMAX-openrc.sh'..."
-source UPPMAX-openrc.sh
+if [ "$CREATE_VMS" = "true" ]; then
+    echo "Sourcing 'UPPMAX-openrc.sh'..."
+    source UPPMAX-openrc.sh
 
-# --- Python venv + deps ---
-if [ ! -d "$VENV_DIR" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv "$VENV_DIR"
-    echo "Installing dependencies..."
-    "$VENV_DIR/bin/pip" install \
-        python-openstackclient \
-        python-novaclient \
-        python-keystoneclient
+    # --- Python venv + deps ---
+    if [ ! -d "$VENV_DIR" ]; then
+        echo "Creating virtual environment..."
+        python3 -m venv "$VENV_DIR"
+        echo "Installing dependencies..."
+        "$VENV_DIR/bin/pip" install \
+            python-openstackclient \
+            python-novaclient \
+            python-keystoneclient
+    fi
+
+    # --- Provision master ---
+    echo "Running start_master_instance.py..."
+    "$VENV_DIR/bin/python" start_master_instance.py "$PUBLIC_KEY_NAME" "$PRIVATE_KEY_PATH"
+
+    # --- Provision workers ---
+    echo "Running start_worker_instances.py..."
+    "$VENV_DIR/bin/python" start_worker_instances.py "$PRIVATE_KEY_PATH"
 fi
-
-# --- Provision master ---
-echo "Running start_master_instance.py..."
-"$VENV_DIR/bin/python" start_master_instance.py "$PUBLIC_KEY_NAME" "$PRIVATE_KEY_PATH"
-
-# --- Provision workers ---
-echo "Running start_worker_instances.py..."
-"$VENV_DIR/bin/python" start_worker_instances.py "$PRIVATE_KEY_PATH"
 
 # --- Read master IP written by start_master_instance.py ---
 MASTER_IP=$(grep '^MASTER_IP=' master_info.txt | cut -d'=' -f2)
