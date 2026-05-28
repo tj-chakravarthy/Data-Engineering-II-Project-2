@@ -143,18 +143,26 @@ Producer ↔ consumer contract:
 
 ## Experiments
 
-The brief wants scalability across multiple worker/VM counts (1, 2, 4 where feasible), throughput, runtime, memory, GitHub API wait time, and bottleneck identification.
+This branch contains the experiment setup used to evaluate the scalability of the Pulsar-based GitHub analytics pipeline. The experiments run the full end-to-end system on Docker Swarm, including the crawler, Apache Pulsar, analytics runners, and aggregator.
 
-Realistic plan:
+The main goal is to measure how different deployment settings affect:
 
-- **Now**: producer-side experiments using `crawler.cli` (no broker needed). Vary token pool size, date window, query qualifier. The crawler already tracks `rate_limit_wait_seconds`, `peak_python_memory_kb`, and `search_splits` — those are the numbers to capture.
-- **Once broker + consumers are up**: end-to-end experiments where the "worker count" knob actually means something (consumer parallelism, partition count on the topic).
+- processed repositories,
+- throughput,
+- average end-to-end latency,
+- the main performance bottleneck.
 
-Expected end-to-end command shape, once everything exists:
+Each experiment runs for a fixed duration and varies one parameter at a time.
+
+### Experiment runner
+
+The main script is:
 
 ```bash
-python3 -m experiments.run_scalability --workers 1,2,4 --input data/output/repos.ndjson
+scripts/infrastructure/run_experiments_plan.sh
 ```
+
+Make sure to furst run the script `run.sh` and after that, simply ssh onto the Master VM and run the script `run_experiments_plan.sh`
 
 ## Report
 
