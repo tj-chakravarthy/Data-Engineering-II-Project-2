@@ -25,12 +25,30 @@ def main() -> None:
 
     parser.add_argument(
         "--file",
+        type=Path,
         default="data/results/timestamps_profiling.jsonl",
         help="Path to timestamps_profiling.jsonl",
     )
 
+    parser.add_argument(
+        "--deployed-at",
+        type=float,
+        default=None,
+        help="Unix timestamp of when this experiment was deployed",
+    )
+
+    parser.add_argument(
+        "--run-seconds",
+        required=True,
+        type=float,
+        default=None,
+        help="Number of seconds this experiment ran for",
+    )
+
     args = parser.parse_args()
-    path = Path(args.file)
+    path = args.file
+    deployed_at = args.deployed_at
+    configured_duration_seconds = args.run_seconds
 
     if not path.exists():
         print(f"File does not exist: {path}")
@@ -39,6 +57,7 @@ def main() -> None:
     latencies = []
     first_start = None
     last_end = None
+    stale_count = 0
 
     with path.open("r", encoding="utf-8") as f:
         for line in f:
@@ -53,6 +72,9 @@ def main() -> None:
             aggregator_received_at = parse_timestamp(row.get("aggregator_received_at"))
 
             if crawler_emitted_at is None or aggregator_received_at is None:
+                continue
+            if deployed_at is not None and crawler_emitted_at < deployed_at:
+                stale_count += 1
                 continue
 
             latency = aggregator_received_at - crawler_emitted_at
@@ -70,8 +92,8 @@ def main() -> None:
         print("No valid timestamp rows found.")
         return
 
-    duration_seconds = last_end - first_start
-    throughput_repos_per_second = total_processed_repositories / duration_seconds
+    observed_duration_seconds = last_end - first_start
+    throughput_repos_per_second = total_processed_repositories / configured_duration_seconds
     throughput_repos_per_minute = throughput_repos_per_second * 60
     average_latency_seconds = mean(latencies)
 
@@ -80,7 +102,11 @@ def main() -> None:
         "throughput_repos_per_second": round(throughput_repos_per_second, 4),
         "throughput_repos_per_minute": round(throughput_repos_per_minute, 4),
         "average_latency_seconds": round(average_latency_seconds, 4),
+        "observed_duration_seconds": round(observed_duration_seconds, 4),
     }
+    if deployed_at is not None:
+        summary["stale_discarded"] = stale_count
+        summary["stale_fraction"] = round(stale_count / (total_processed_repositories + stale_count), 4)
 
     print(json.dumps(summary, indent=2))
 
