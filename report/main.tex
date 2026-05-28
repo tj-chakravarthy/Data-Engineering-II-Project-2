@@ -12,6 +12,9 @@
 \usepackage{float}
 \usepackage{tikz}
 \usepackage[colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black]{hyperref}
+\usepackage{subcaption}
+\usepackage{booktabs}
+\captionsetup[subfigure]{font=footnotesize}
 \usetikzlibrary{positioning,arrows.meta}
 
 
@@ -25,7 +28,7 @@
 
 \begin{document}
 
-\title{A Scalable GitHub Analytics System Using Apache Pulsar}
+\title{Scalable Stream Processing Using Apache Pulsar}
 
 \author{
 \IEEEauthorblockN{
@@ -45,18 +48,18 @@
 \maketitle
 
 \begin{abstract}
-% Write this last.
-% Briefly describe:
-% 1. the problem,
-% 2. the proposed system,
-% 3. the main technologies,
-% 4. the experiments,
-% 5. the main findings.
-
+This paper presents a scalable GitHub analytics system using Apache Pulsar.
+The system collects repository metadata from the GitHub API, enriches it using
+additional API requests, and continuously aggregates the results to answer four
+analytics questions about languages, commits, unit tests, and CI/CD usage. The
+system is deployed with Docker and Docker Swarm across cloud virtual machines.
+A 38-hour collection processed 78,110 unique repositories. The experiments show
+that runner parallelism and GitHub API token count have the strongest effect on
+throughput, while worker VM count and batch size have smaller effects.
 \end{abstract}
 
 \begin{IEEEkeywords}
-GitHub API, Apache Pulsar, stream processing, container orchestration, data analytics
+GitHub API, Apache Pulsar, stream processing, containerization, orchestration, Docker Swarm, data analytics
 \end{IEEEkeywords}
 
 \section{Introduction}
@@ -139,37 +142,37 @@ question based on all aggregated data so far.
 \begin{figure}[!t]
 \centering
 \begin{tikzpicture}[
-    node distance=0.45cm,
+    node distance=0.25cm,
     component/.style={
         rectangle,
         draw,
         rounded corners,
         align=center,
-        minimum width=2.0cm,
-        minimum height=0.7cm,
-        font=\footnotesize
+        minimum width=1.45cm,
+        minimum height=0.48cm,
+        font=\scriptsize
     },
     stream/.style={
         rectangle,
         draw,
         dashed,
         align=center,
-        minimum width=2.0cm,
-        minimum height=0.6cm,
-        font=\footnotesize
+        minimum width=1.45cm,
+        minimum height=0.44cm,
+        font=\scriptsize
     },
-    arrow/.style={->, thick}
+    arrow/.style={-{Stealth}, thick}
 ]
 
 \node[component] (github) {GitHub API};
 \node[component, below=of github] (crawler) {Metadata\\Crawler};
 \node[stream, below=of crawler] (raw) {Raw Repository\\Stream};
 
-\node[component, below left=0.8cm and 0.45cm of raw] (runner1) {Runner 1\\Enrichment};
-\node[below=1.00cm of raw, font=\Large] (runnerdot) {...};
-\node[component, below right=0.8cm and 0.45cm of raw] (runnern) {Runner $N$\\Enrichment};
+\node[component, below left=0.45cm and 0.28cm of raw] (runner1) {Runner 1\\Enrichment};
+\node[below=0.62cm of raw, font=\normalsize] (runnerdot) {...};
+\node[component, below right=0.45cm and 0.28cm of raw] (runnern) {Runner $N$\\Enrichment};
 
-\node[stream, below=2.0cm of raw] (processed) {Data\\Stream};
+\node[stream, below=1.20cm of raw] (processed) {Data\\Stream};
 \node[component, below=of processed] (aggregator) {Aggregator};
 \node[component, below=of aggregator] (results) {Live Q1-Q4\\Results};
 
@@ -189,6 +192,7 @@ GitHub API requests, and the aggregator continuously updates the analytics
 results.}
 \label{fig:architecture}
 \end{figure}
+
 
 \subsection{Deployment and Automation}
 The system is intended to run across multiple cloud virtual machines using
@@ -246,84 +250,275 @@ current global answers to the four project questions. Since aggregation is
 performed continuously, the system produces live results that are updated as
 more repositories are processed.
 
+The analytics stage also supports adaptive top-$N$ queries. The runners extract
+general repository features, while the aggregator computes the final rankings.
+The value of $N$ is provided as a runtime configuration parameter, through the
+deployment environment file. Therefore, changing from top-10 to top-20 only
+requires updating the configuration and restarting the aggregator component,
+without changing the crawler, runners, or streaming layer.
+
 \section{Experiments and Results}
 \label{sec:experiments}
 
-\subsection{Experimental Setup}
-% Describe:
-% - hardware / VM setup,
-% - number of VMs,
-% - Docker deployment,
-% - dataset size,
-% - number of runs,
-% - metrics.
-%
-% Metrics can include:
-% - total processing time,
-% - throughput,
-% - number of processed repositories,
-% - speedup,
-% - correctness of Q1--Q4 analytics.
-
 \subsection{GitHub Analytics Results}
-% Present the required analytics:
-%
-% Q1. Top 10 programming languages by number of repositories.
-% Q2. Top 10 most frequently updated repositories.
-% Q3. Top 10 programming languages with unit tests.
-% Q4. Top 10 programming languages with both unit tests and CI.
+The application collected data for 38 hours, during which a total amount of
+78,110 unique repositories was processed and taken into account for the four
+project questions. Of those 78,110 repositories, 36,185 were taken from the
+(crawler) cache of a previous run.
 
-%\begin{figure}[!t]
-%    \centering
-%    \includegraphics[width=\linewidth]{figures/top_languages.pdf}
-%    \caption{Top 10 programming languages by number of repositories.}
-%    \label{fig:top-languages}
-%\end{figure}
-%
-%\begin{figure}[!t]
-%    \centering
-%    \includegraphics[width=\linewidth]{figures/top_commits.pdf}
-%    \caption{Top 10 most frequently updated repositories.}
-%    \label{fig:top-commits}
-%\end{figure}
-%
-%\begin{figure}[!t]
-%    \centering
-%    \includegraphics[width=\linewidth]{figures/top_test_languages.pdf}
-%    \caption{Top 10 programming languages by number of repositories with unit tests.}
-%    \label{fig:top-tests}
-%\end{figure}
-%
-%\begin{figure}[!t]
-%    \centering
-%    \includegraphics[width=\linewidth]{figures/top_test_ci_languages.pdf}
-%    \caption{Top 10 programming languages by number of repositories with both unit tests and CI.}
-%    \label{fig:top-tests-ci}
-%\end{figure}
+\subsubsection{Q1: Top Languages by Repository Count}
+Figure~\ref{fig:q1a} shows the top 10 languages by repository count. The largest
+group is Unknown (26,162), representing repositories with no detected primary
+language. Among named languages, HTML (14,367), Python (9,421), JavaScript
+(7,858), and TypeScript (6,163) lead, showing the dominance of web-facing
+languages in the collected dataset.
 
-\subsection{Experiment 1}
-\subsection{Experiment 2}
-...
-\subsection{Experiment ...}
+\subsubsection{Q2: Most Frequently Updated Repositories}
+Figure~\ref{fig:q1b} shows the top 10 repositories by commit count. The leading
+entries are mainly kernel forks and mirrors, with the top two
+exceeding 800,000 commits. This shows that raw commit count
+must be interpreted carefully, since mirrored repositories can
+appear disproportionately active.
 
+\begin{figure}[!t]
+    \centering
+
+    \begin{subfigure}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{figures/q1_languages.png}
+        \caption{Top 10 programming languages by repository count.}
+        \label{fig:q1a}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{figures/q2_commits.png}
+        \caption{Top 10 repositories by total commit count.}
+        \label{fig:q1b}
+    \end{subfigure}
+
+    \caption{Repository language and commit count distributions ($n=78{,}110$).}
+    \label{fig:q1}
+\end{figure}
+
+\subsubsection{Q3: Languages with Test-Driven Development}
+Figure~\ref{fig:q3a} shows the top 10 languages by repositories containing test
+files. Python leads with 1,293 repositories, followed by
+TypeScript (680) and JavaScript (595). Overall, the results
+suggest that test adoption is relatively low compared with the
+total number of processed repositories.
+
+\subsubsection{Q4: Languages with TDD and CI/DevOps}
+Figure~\ref{fig:q3b} shows languages with both test files and CI/CD
+configuration. Python (416), TypeScript (214), and JavaScript (185) lead again.
+However, only part of the repositories with test indicators also contain CI/CD
+configuration, showing that testing and CI/CD adoption do not always appear
+together.
+
+\begin{figure}[!t]
+    \centering
+
+    \begin{subfigure}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{figures/q3_tdd.png}
+        \caption{Top 10 languages by TDD adoption.}
+        \label{fig:q3a}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{figures/q4_tdd_ci.png}
+        \caption{Top 10 languages by combined TDD and CI/DevOps adoption.}
+        \label{fig:q3b}
+    \end{subfigure}
+
+    \caption{TDD and combined TDD--CI/DevOps adoption across programming languages ($n=78{,}110$).}
+    \label{fig:q3}
+\end{figure}
+
+
+
+\subsubsection{Live Results Stability}
+Figures~\ref{fig:trend_q1} and~\ref{fig:trend_q34} show that the
+rankings stabilise early during processing. Q1 stabilises almost
+immediately, with the leading languages keeping fixed positions
+for the rest of the dataset. Q2 also converges early among the
+top repositories, although some lower-ranked entries shift later.
+For Q3 and Q4, Python, TypeScript, and JavaScript remain the
+dominant languages after brief initial fluctuations.
+
+\begin{figure}[t]
+    \centering
+
+    \begin{subfigure}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{figures/trend_q1_rank_stability.png}
+        \caption{Q1 language ranks stabilise within the first 1,000 repositories.}
+        \label{fig:trend_q1a}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}{0.48\linewidth}
+        \centering
+        \includegraphics[width=\linewidth]{figures/trend_q2_rank_stability.png}
+        \caption{Q2 language ranks stabilise within the first 1,000 repositories.}
+        \label{fig:trend_q1b}
+    \end{subfigure}
+
+    \caption{Language-rank stability trends for Q1 and Q2.}
+    \label{fig:trend_q1}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{figures/trend_q3_q4_rank_stability.png}
+    \caption{Language-rank stability over time for Q3 (left) and Q4 (right).}
+    \label{fig:trend_q34}
+\end{figure}
+
+\subsection{Experiments}
+\subsubsection{Experimental Setup}
+
+The experiments evaluate the scalability and performance of the GitHub
+analytics pipeline under different deployment configurations. Each run was
+executed for 30 minutes. The main metrics were the total number of processed
+repositories, throughput in repositories per minute, and average end-to-end
+latency in seconds. Latency was measured as the time between a repository being
+emitted by the crawler and the corresponding result being received by the
+aggregator.
+
+The evaluation followed a staged design instead of a full grid search. Each
+experiment group varied one parameter while keeping the others fixed. The
+tested parameters were the number of analytics runners, the number of GitHub
+API tokens, the number of worker VMs, and the batch size used when runners
+send results to the aggregator.
+
+\begin{table}[!t]
+\centering
+\caption{Scalability and batching experiments across runners, GitHub API tokens, worker VMs, and batch sizes.}
+\label{tab:scaling-experiments}
+\begin{tabular}{llrrr}
+\toprule
+Experiment & Scale & Repos & Throughput & Latency \\
+\midrule
+Runner & 1 runner  & 700  & 23.33 & 871.94 \\
+Runner & 2 runners & 1520 & 50.67 & 561.43 \\
+Runner & 4 runners & 1960 & 65.33 & 291.74 \\
+Runner & 8 runners & 1920 & 64.00 & 135.29 \\
+\midrule
+GitHub API token & 1 token  & 380  & 12.67 & 136.31 \\
+GitHub API token & 3 tokens & 1200 & 40.00 & 261.60 \\
+GitHub API token & 5 tokens & 1980 & 66.00 & 279.41 \\
+\midrule
+Worker VM & 1 worker  & 1980 & 66.00 & 323.93 \\
+Worker VM & 2 workers & 2000 & 66.67 & 338.28 \\
+Worker VM & 4 workers & 1980 & 66.00 & 310.87 \\
+\midrule
+Batch size & 1   & 2002 & 66.73 & 281.83 \\
+Batch size & 20  & 1960 & 65.33 & 297.46 \\
+Batch size & 100 & 1800 & 60.00 & 333.27 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.8\linewidth]{figures/all_experiments_processed_repositories.pdf}
+    \caption{Processed repositories across all experiment runs.}
+    \label{fig:processed-repositories}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.8\linewidth]{figures/all_experiments_throughput.pdf}
+    \caption{Throughput across all experiment runs.}
+    \label{fig:throughput}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.8\linewidth]{figures/all_experiments_average_latency.pdf}
+    \caption{Average end-to-end latency across all experiment runs.}
+    \label{fig:latency}
+\end{figure}
+
+\subsubsection{Runner Scalability}
+
+The runner scalability experiment varied the number of runners from 1 to 8 while
+keeping the number of workers, tokens, and batch size fixed. The results are
+shown in Table~\ref{tab:scaling-experiments} and
+Figures~\ref{fig:processed-repositories},~\ref{fig:throughput},~and~\ref{fig:latency}.
+
+Increasing the number of runners had the strongest effect on performance.
+Throughput increased from 23.33 repositories/minute with one runner to about
+65 repositories/minute with four runners. Increasing the number of runners to
+eight did not improve throughput further, suggesting that the system reaches a
+bottleneck after four runners. This is likely caused by GitHub API access and
+the limited number of available tokens. However, latency continued to decrease
+with more runners, which suggests that additional runners reduce the time that
+repositories spend waiting before being processed, even when total throughput
+is already capped.
+
+\subsubsection{Token Scaling}
+
+The token scaling experiment varied the number of GitHub API tokens while
+keeping four runners, four workers, and batch size 20. The results are shown in
+Table~\ref{tab:scaling-experiments} and
+Figures~\ref{fig:processed-repositories},~\ref{fig:throughput},~and~\ref{fig:latency}.
+
+The number of tokens also had a clear impact on throughput. With one token, the
+system processed only 380 repositories, while with five tokens it processed
+1980 repositories. Throughput increased from 12.67 to 66.00
+repositories/minute. This confirms that GitHub API access is a major limiting
+factor. The latency results are less direct: latency increases as more tokens
+are added. This does not necessarily mean that the system becomes slower per
+repository. Instead, more tokens allow many more repositories to enter and stay
+active in the pipeline, which can increase the measured end-to-end time for
+completed records.
+
+\subsubsection{Worker VM Scalability}
+
+The worker scaling experiment varied the number of worker VMs while keeping four
+runners, five tokens, and batch size 20. The results are shown in
+Table~\ref{tab:scaling-experiments} and
+Figures~\ref{fig:processed-repositories},~\ref{fig:throughput},~and~\ref{fig:latency}.
+
+Increasing the number of worker VMs had almost no effect on throughput.
+Throughput stayed close to 66 repositories/minute in all three configurations.
+This suggests that the workload is not computationally expensive enough to
+benefit significantly from more machines. Most of the time is likely spent
+waiting for GitHub API requests rather than performing CPU-intensive local
+processing. Therefore, worker VM scaling is less important than runner
+parallelism and token availability for this workload.
+
+\subsubsection{Batch Size}
+
+The batch-size experiment varied how often runners send results to the
+aggregator. The results are shown in Table~\ref{tab:scaling-experiments} and
+Figures~\ref{fig:processed-repositories},~\ref{fig:throughput},~and~\ref{fig:latency}.
+
+Batch size had only a small effect compared with runners and tokens. Smaller
+batches gave slightly higher throughput and lower latency, but the difference
+was not large enough to identify batching as the main bottleneck. This suggests
+that communication through Pulsar and aggregation are not as expensive as the
+external GitHub API enrichment work. Larger batches may delay updates because
+records wait longer before being sent to the aggregator, which can explain the
+higher latency for batch size 100.
 
 \subsection{Discussion}
-% Discuss:
-% - what worked well,
-% - what the main bottlenecks were,
-% - whether scaling was close to linear,
-% - whether partitioning helped,
-% - limitations caused by GitHub API rate limits,
-% - limitations of unit-test and CI detection heuristics.
+
+Overall, no experiment run was able to process more than 2000 repositories
+during the 30 minutes processing time. During the enrichment phase of the
+pipeline, it is possible for each repositories to require from 3 to 19 extra
+calls to the GitHub API. Meaning that reaching 2000 repositories on average is
+about when all GitHub tokens become drained, and no more work can be done.
 
 \section{Conclusion}
 \label{sec:conclusion}
-% Summarize:
-% - what system was built,
-% - how Pulsar was used,
-% - what experiments were performed,
-% - what the main findings were,
-% - possible future work.
+This project built a scalable stream-processing system for GitHub analytics.
+The pipeline processed 78,110 unique repositories and answered all four
+analytics questions. Experiments showed that runners and GitHub API tokens
+affected throughput the most, while worker VMs and batch size had limited
+impact. Overall, performance was mainly constrained by GitHub API access.
 
 % References
 \bibliographystyle{IEEEtran}
