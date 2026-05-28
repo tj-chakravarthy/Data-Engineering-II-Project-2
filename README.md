@@ -143,18 +143,8 @@ Producer ↔ consumer contract:
 
 ## Experiments
 
-The brief wants scalability across multiple worker/VM counts (1, 2, 4 where feasible), throughput, runtime, memory, GitHub API wait time, and bottleneck identification.
+During development, the experiment automation and measurement scripts were implemented and tested on a separate `experiments` branch. The final runnable version is integrated into `main`, so reproduction should be done from the `main` branch.
 
-Realistic plan:
-
-- **Now**: producer-side experiments using `crawler.cli` (no broker needed). Vary token pool size, date window, query qualifier. The crawler already tracks `rate_limit_wait_seconds`, `peak_python_memory_kb`, and `search_splits` — those are the numbers to capture.
-- **Once broker + consumers are up**: end-to-end experiments where the "worker count" knob actually means something (consumer parallelism, partition count on the topic).
-
-Expected end-to-end command shape, once everything exists:
-
-```bash
-python3 -m experiments.run_scalability --workers 1,2,4 --input data/output/repos.ndjson
-```
 
 ## Report
 
