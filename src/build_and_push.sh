@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 CURRENT_BRANCH=$(git branch --show-current)
 TAG=$(echo "$CURRENT_BRANCH" | tr '/' '-')
-DOCKERHUB_URL="andreashadjoullis1153/pulsar_client"
+DOCKERHUB_URL="${PULSAR_CLIENT_IMAGE:?Set PULSAR_CLIENT_IMAGE to your Docker Hub repo, e.g. user/pulsar_client}"
 
 echo "Building image using context: ${SCRIPT_DIR}"
 # Build the primary branch tag

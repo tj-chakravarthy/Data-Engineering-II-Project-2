@@ -168,11 +168,6 @@ python3 -m unittest discover -s tests
 
 Still TODO when the rest of the stack lands: integration tests for the producer→broker→consumer flow, smoke tests against the Docker Swarm deployment, experiment reproducibility checks.
 
-## Deadlines
-
-- [Status presentation](https://use.mazemap.com/#v=1&config=uu&campusid=49&search=%C3%85ngstr%C3%B6m%202002&zlevel=1&center=17.647455,59.839254&zoom=18&sharepoitype=poi&sharepoi=390487): **25 May 2026 at 13:15**.
-- [Final submission](https://uppsala.instructure.com/courses/115762/assignments/389958): **29 May 2026 at 23:59**.
-
 ## Definition of done
 
 We're done when:
