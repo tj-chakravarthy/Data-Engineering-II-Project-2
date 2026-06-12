@@ -1,5 +1,6 @@
 .env
 .env.*
+!.env.example
 .venv/
 __pycache__/
 *.py[cod]
@@ -14,6 +15,7 @@ id_rsa
 id_rsa.pub
 id_ed25519
 id_ed25519.pub
+Project 2 docs/
 
 # Crawler and analytics runtime outputs
 data/cache/

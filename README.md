@@ -9,8 +9,6 @@ We crawl GitHub repository metadata, stream it through Pulsar, and answer the fo
 3. Top 10 programming languages with the most projects using unit tests.
 4. Top 10 programming languages with the most projects using both unit tests and CI/DevOps.
 
-Assignment PDF: `Project 2 docs/DE-II_project_2-1.pdf`.
-
 ## Setup
 
 Target environment: Linux (course VMs and team workstations).
@@ -23,7 +21,7 @@ Dependencies:
 
 To run the application see the [Infrastructure](#infrastructure) section.
 
-Runtime config lives in `scripts/infrastructure/.env`, tracked in the repo. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5`, as anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
+Runtime config lives in `scripts/infrastructure/.env`, which is intentionally not tracked. Start from `scripts/infrastructure/.env.example` and replace placeholders with local values. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5`, as anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
 
 ## Running the crawler
 
@@ -99,9 +97,10 @@ Provisioning scripts live in `scripts/infrastructure/`. They use OpenStack + clo
 
 ```bash
 cd scripts/infrastructure
+cp .env.example .env
 cp UPPMAX-openrc.sh.template UPPMAX-openrc.sh
-# Fill in OpenStack values in UPPMAX-openrc.sh or simply put your openrc file
-# in scripts/infrastructure.
+# Fill in local GitHub tokens in .env.
+# Fill in OpenStack values in UPPMAX-openrc.sh or put your openrc file here.
 ./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH>
 ```
 - PUBLIC_KEY_NAME: This is the name of the public key found on the SSC.

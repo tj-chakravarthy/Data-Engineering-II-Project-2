@@ -1,5 +1,29 @@
+#cloud-config
+package_update: true
+package_upgrade: false
+
+packages:
+  - python3-pip
+  - python3-dev
+  - build-essential
+
+groups:
+  - docker
+
+system_info:
+  default_user:
+    groups: [docker]
+
+byobu_default: system
+
 # The login key for the master VM is injected by OpenStack from the key_name
 # passed to start_master_instance.py. Add temporary extra public keys here only
 # for local/private deployments.
 ssh_authorized_keys:
   - "[your SSH public key here]"
+
+runcmd:
+  - touch /home/ubuntu/hello.txt
+  - curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
+  - usermod -aG docker ubuntu && newgrp docker
+  - ssh-keygen -t ed25519 -f /home/ubuntu/.ssh/cluster_key -N "" && chown ubuntu:ubuntu /home/ubuntu/.ssh/cluster_key*
