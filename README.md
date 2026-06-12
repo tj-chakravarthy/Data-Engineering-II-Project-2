@@ -1,39 +1,100 @@
-# Data Engineering II Project 2
+# Scalable Stream Processing with Apache Pulsar
 
-GitHub analytics system using a streaming framework. Uppsala University 1TD076 Data Engineering II, VT 2026, Group 16.
+[![CI](https://github.com/tj-chakravarthy/Data-Engineering-II-Project-2/actions/workflows/ci.yml/badge.svg)](https://github.com/tj-chakravarthy/Data-Engineering-II-Project-2/actions/workflows/ci.yml)
 
-We crawl GitHub repository metadata, stream it through Pulsar, and answer the four project questions from the brief:
+A distributed GitHub analytics pipeline: a rate-limit-aware crawler streams repository metadata through Apache Pulsar to horizontally scalable enrichment workers and a live aggregator, deployed with Docker Swarm on OpenStack cloud VMs.
 
-1. Top 10 programming languages by number of projects.
-2. Top 10 most frequently updated GitHub projects.
-3. Top 10 programming languages with the most projects using unit tests.
-4. Top 10 programming languages with the most projects using both unit tests and CI/DevOps.
+Built by a team of five for Uppsala University's 1TD076 Data Engineering II course (Group 16, spring 2026). The full write-up — architecture, methodology, and scalability experiments — is in the [project report (PDF)](report/DE2_Project_Group16.pdf).
 
-## Setup
+## Results at a glance
 
-Target environment: Linux (course VMs and team workstations).
-Dependencies:
-- bash
-- python (with venv support)
-- git
-- OpenSSH client
-- OpenStack credentials
+A continuous ~39-hour run collected, enriched, and analyzed **78,110 unique GitHub repositories** (36,185 served from the crawler's disk cache rather than re-crawled), answering four analytics questions live as data streamed through the pipeline:
 
-To run the application see the [Infrastructure](#infrastructure) section.
+<p align="center"><img src="report/figures/throughput_over_time.png" width="750" alt="System throughput over the full 39-hour run"></p>
 
-Runtime config lives in `scripts/infrastructure/.env`, which is intentionally not tracked. Start from `scripts/infrastructure/.env.example` and replace placeholders with local values. Tokens go in as `GITHUB_TOKEN_1` through `GITHUB_TOKEN_5`, as anything starting with `GITHUB_TOKEN` joins the pool. The crawler rotates through them on rate limits and only sleeps once the whole pool is dry.
+<p align="center"><img src="report/figures/q1_languages.png" width="700" alt="Q1: top 10 programming languages by repository count"></p>
+
+The aggregator publishes rankings continuously, so answers are available (and stable) long before the run completes — Q1 language ranks fix within the first ~1,000 repositories, and the Q3/Q4 leaders emerge almost immediately:
+
+<p align="center"><img src="report/figures/trend_q3_q4_convergence.png" width="750" alt="Live aggregator convergence for Q3 and Q4"></p>
+
+Scalability experiments (30-minute runs, one variable at a time):
+
+| Variable | Effect on throughput |
+|---|---|
+| Enrichment runners (1 → 4) | **23 → 65 repos/min** — the dominant factor, until API capacity saturates |
+| GitHub API tokens (1 → 5) | **13 → 66 repos/min** — confirms external API access is the bottleneck |
+| Worker VMs (1 → 4) | None (~66 repos/min) — workload is I/O-bound, not CPU-bound |
+| Runner→aggregator batch size | Small — Pulsar transport is cheap relative to enrichment |
+
+The honest takeaway: each repository costs 3–19 extra GitHub API calls to enrich, so performance is governed by token budget and request parallelism, not compute. Details and latency analysis are in the [report](report/DE2_Project_Group16.pdf).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    GH[GitHub REST API]
+    GH -->|day-sliced search| CR[Crawler / producer]
+    CR --> P[(Pulsar topic: repos.raw)]
+    P --> R1[Enrichment runner 1]
+    P --> RN[Enrichment runner N]
+    R1 <-->|commits, tests, CI checks| GH
+    RN <-->|commits, tests, CI checks| GH
+    R1 --> P2[(Pulsar topic: repos.enriched)]
+    RN --> P2
+    P2 --> AG[Aggregator]
+    AG --> OUT[Live Q1–Q4 results + charts]
+```
+
+Engineering decisions worth a look:
+
+- **Predictive token pool** (`src/crawler/github_client.py`) — every request goes to the token with the most remaining quota as last reported by GitHub, instead of naive round-robin that hammers one token until it 429s. Rotation, bounded sleeps, and a total-wait budget handle full-pool exhaustion.
+- **Adaptive search splitting** (`src/crawler/crawl.py`) — GitHub search caps any query at 1,000 results, so the crawler day-slices the date range and recursively subdivides UTC time windows until every leaf query fits under the cap. Verified live: a one-day `pushed:` query at `stars:>=100` (~17k results) splits into 24 compliant leaf ranges.
+- **At-least-once delivery with idempotent consumers** — the producer uses async sends with bounded in-flight messages, per-record retry budgets, and an optional checkpoint file; every consumer dedupes on `repo_id`. Duplicates are expected and handled, not assumed away.
+- **Backpressure** — the crawler monitors the `repos.raw` backlog and pauses publishing when runners fall behind.
+- **Disk-cached crawling** — per-day NDJSON cache means reruns and overlapping experiments don't burn API quota; nearly half the 78k-repo dataset came from cache.
+- **Runtime-adaptive analytics** — `TOP_N`, batch sizes, and flush intervals are deployment configuration, so "top 10 → top 20" is a config change and an aggregator restart, with no code changes.
+
+Messages on `repos.raw` are raw crawler JSON (no envelope), partitioned by `repo_id`; runners publish enriched batches to `repos.enriched` for the aggregator.
+
+## Repository layout
+
+```
+src/crawler/       GitHub search crawler: day slicing, adaptive splitting, token pool, cache
+src/streaming/     Pulsar producer (async, retrying, checkpointed) and connection handling
+src/analytics/     Enrichment runners, live aggregator, result plotting
+scripts/infrastructure/   OpenStack + cloud-init provisioning, Docker Swarm deployment
+scripts/process-results/  Result collection from the cluster
+tests/             92 unit tests (no network or broker required)
+report/            Final report (PDF + LaTeX source) and all result figures
+```
+
+## Getting started
+
+Requires Python 3.11+ on Linux.
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+PYTHONPATH=src python3 -m unittest discover -s tests
+```
+
+The 92 tests cover date slicing, dedup, adaptive range splitting, rate-limit retry budgets, async publish/retry/checkpoint behavior, and the analytics enrichment and aggregation logic — all runnable offline in about a second.
 
 ## Running the crawler
 
 Two entry points share the same crawler core:
 
-- **`streaming.pulsar_producer`** — streams each record live to a Pulsar topic. This is the path the graded pipeline uses end-to-end.
-- **`crawler.cli`** — same crawl but writes to a local NDJSON file instead. Handy when the broker isn't up or for offline checks.
-
-### Live publish to Pulsar (primary)
+- **`streaming.pulsar_producer`** — streams each record live to a Pulsar topic (the end-to-end pipeline path).
+- **`crawler.cli`** — same crawl, but writes to a local NDJSON file. Handy without a broker.
 
 ```bash
 export PYTHONPATH=src
+
+# Offline smoke run
+python3 -m crawler.cli --days 1 --limit 25 --output data/output/repos.ndjson
+
+# Live publish to Pulsar
 python3 -m streaming.pulsar_producer \
   --broker pulsar://localhost:6650 \
   --topic repos.raw \
@@ -44,138 +105,51 @@ python3 -m streaming.pulsar_producer \
   --checkpoint-path data/output/repos.published.json
 ```
 
-Notable flags:
+Useful flags (shared by both entry points):
 
-- `--output PATH` — write every successfully sent record to NDJSON. The file is a **publication log for this run** (truncated on each run, does not include records skipped via `--checkpoint-path`), not a snapshot of the topic.
-- `--checkpoint-path PATH` — store every published `repo_id` in a JSON file; restarts skip ids already in it.
-- `--max-retries N` (default 3) — per-record retry budget on transient send failure.
-- `--max-in-flight N` (default 1000) — cap on outstanding async sends, keeps memory bounded when the broker is slow.
+- `--date-field created|pushed|created-or-pushed` — GitHub search date qualifier. GitHub's search API has no `updated:` qualifier (caught in live testing), so "updated in the last year" maps to `pushed:`.
+- `--query "stars:>=10 archived:false"` — extra search qualifiers for scoping a crawl to the available rate-limit budget.
+- `--checkpoint-path PATH` — persist published `repo_id`s; restarts skip them.
+- `--max-in-flight N` — bound outstanding async sends to keep memory flat when the broker is slow.
+- `--limit N`, `--refresh-cache`, `--no-cache`, `--memory-log-every N` — test caps, cache control, observability.
 
-Delivery is **at-least-once**. Retries and crashes can produce duplicate messages; downstream consumers must dedupe by `repo_id`. The checkpoint file shrinks the duplicate window but does not eliminate it.
+The crawler logs `search_cap_warnings` and `incomplete_search_warnings`; both must be zero before a crawl counts as complete. `scripts/validate_crawler_output.py` validates an NDJSON file before downstream ingestion.
 
-The producer exits with status 1 if any record permanently failed to publish — pipelines can check `$?`.
+GitHub tokens are configured via environment (`.env`): any variable starting with `GITHUB_TOKEN` joins the pool. Copy `scripts/infrastructure/.env.example` and fill in your own values — no credentials are tracked in this repo.
 
-### Offline NDJSON crawl
+## Cloud deployment
 
-When Pulsar isn't around:
-
-```bash
-export PYTHONPATH=src
-python3 -m crawler.cli --days 1 --limit 25 \
-  --output data/output/repos.ndjson
-```
-
-A larger run:
-
-```bash
-python3 -m crawler.cli --days 365 --date-field created-or-pushed \
-  --output data/output/repos.ndjson
-```
-
-Useful options (shared between both entry points):
-
-- `--date-field created|pushed|created-or-pushed` — GitHub search date qualifier. `created-or-pushed` runs both and globally dedupes. GitHub's search API doesn't actually expose an `updated:` qualifier (we caught this in a live test), so the brief's "updated in the last year" criterion maps to `pushed:` (last commit) instead.
-- `--query "stars:>=10 archived:false"` — extra GitHub search qualifiers. **Very useful for scoping** — a full unfiltered last-year crawl is probably infeasible within the rate-limit budget, so adding a stars filter is the practical move.
-- `--refresh-cache` — refetch even if cache files exist.
-- `--no-cache` — stream without writing cache files.
-- `--limit N` / `--limit-per-day N` — caps for tests; limited slices are not cached.
-- `--memory-log-every N` / `--max-memory-mb N` — memory observability and kill switch.
-
-The crawler logs `search_splits`, `search_cap_warnings`, and `incomplete_search_warnings`. Both warning counters must be **zero** before treating a crawl as complete for report-grade results.
-
-Validate a handoff file before downstream ingestion:
-
-```bash
-python3 scripts/validate_crawler_output.py data/output/repos.ndjson
-```
-
-Non-zero exit means the file should not be streamed.
-
-## Infrastructure
-
-Provisioning scripts live in `scripts/infrastructure/`. They use OpenStack + cloud-init to provision a master and four workers, all `ssc.medium` running Ubuntu 22.04 with Docker installed and SSH between nodes set up.
+`scripts/infrastructure/` provisions a Docker Swarm cluster (one manager, four workers, Ubuntu 22.04) on OpenStack via cloud-init, then deploys the Pulsar + crawler + analytics stack:
 
 ```bash
 cd scripts/infrastructure
-cp .env.example .env
-cp UPPMAX-openrc.sh.template UPPMAX-openrc.sh
-# Fill in local GitHub tokens in .env.
-# Fill in OpenStack values in UPPMAX-openrc.sh or put your openrc file here.
+cp .env.example .env                            # fill in GitHub tokens
+cp UPPMAX-openrc.sh.template UPPMAX-openrc.sh   # fill in OpenStack credentials
 ./run.sh <PUBLIC_KEY_NAME> <PRIVATE_KEY_PATH>
 ```
-- PUBLIC_KEY_NAME: This is the name of the public key found on the SSC.
-- PRIVATE_KEY_PATH: This is the path of the corresponding private key used to connect to the SSC.
 
-Notes on the infrastructure side:
+`run.sh` provisions the VMs and ships the repo to the manager; `setup_swarm.sh` deploys the stack (the image named by `PULSAR_CLIENT_IMAGE`, built via `src/build_and_push.sh`) and finishes by running `verify_swarm_pipeline.sh`, an end-to-end smoke check of the deployed pipeline. `teardown_swarm.sh` tears everything down. Scaling runners or workers is a `docker service scale` / swarm-join away — which is exactly how the report's experiments were run.
 
-- Worker count is hard-coded to four. We always spawn four workers so during the experiments it is much easier to test scalability by just changing the number of replicas or by having workers join/leave the swarm. To ssh onto any of the workers from the master VM simply use `ssh group16-woker-x` where _x_ belongs to range 1-4.
-- Floating IP assignment is manual.
-- `run.sh` provisions the VMs and ships the repo to the master; `setup_swarm.sh` deploys the Pulsar/crawler/analytics Swarm stack.
-- `setup_swarm.sh` deploys the image named by `PULSAR_CLIENT_IMAGE`; run `src/build_and_push.sh` first when the image changes.
-- `setup_swarm.sh` runs `verify_swarm_pipeline.sh` after deployment; rerun it on the master with `bash /home/ubuntu/app/scripts/infrastructure/verify_swarm_pipeline.sh`.
-- A clean-VM reproduction guide still needs a final pass once the full stack is demo-tested.
+Two companion branches preserve development history referenced in the report: [`experiments`](../../tree/experiments) (experiment automation and measurement scripts; final versions are integrated into `main`) and [`auto-floating-ip`](../../tree/auto-floating-ip) (automatic floating-IP assignment via the OpenStack API, developed after the experiment runs).
 
-## Streaming and application logic
+## Team
 
-Topic layout we're planning for, layered as the brief suggests:
+| | Main areas (see commit history) |
+|---|---|
+| Tejas (TJ) Chakravarthy | Crawler (adaptive splitting, token pool, caching), Pulsar producer, pipeline verification, floating-IP automation |
+| Andreas Hadjoullis | OpenStack/cloud-init provisioning, Docker Swarm deployment automation, system integration |
+| Julios Fotiou | Crawler backpressure, results collection scripts, report writing |
+| Adnan Erlangga Raharja | Scalable enrichment runners, aggregator, plotting, unit tests |
+| Tanay Singh | Results analysis, rank-stability and convergence figures, report results |
 
-```text
-repos.raw            # producer writes here
-repos.enriched       # batched per-repo enrichment from scalable runners
-```
+## What we'd improve next
 
-Implemented analytics path:
+- Integration tests for the producer → broker → consumer path (e.g., CI with a Pulsar service container) on top of the existing unit suite.
+- A schema registry (Avro/JSON Schema) on the topics instead of implicit raw-JSON contracts.
+- Exactly-once result accounting via Pulsar transactions or a persistent dedup store, replacing in-memory `repo_id` sets.
+- Non-root containers and pinned image digests in the Dockerfile.
+- Linting and type checking (ruff, mypy) in CI.
 
-- `streaming.pulsar_producer` publishes crawler records to `repos.raw`.
-- Multiple `analytics.runner` workers can share the `repos.raw` subscription, enrich repositories with commit-count, unit-test, and CI evidence, and publish batches of complete per-repo messages to `repos.enriched`.
-- One `analytics.aggregator` consumes `repos.enriched`, dedupes each record by `repo_id`, writes `data/results/q1_languages.json`, `q2_commits.json`, `q3_tdd_languages.json`, `q4_tdd_ci_languages.json`, and `all_results.json`, then renders charts into `data/figures`.
-- `TOP_N` controls ranking size at runtime, so top 10 → top 20 does not require source changes.
-- `FLUSH_EVERY` controls how many records each runner batches before sending to `repos.enriched`, and how many batch messages the aggregator processes before saving/plotting. `FLUSH_IDLE_SECONDS` (default 30) flushes pending records when either side goes quiet.
+## License
 
-Q2 commits is the expensive part — GitHub's search response doesn't include commit counts, so the analytics worker uses `GET /repos/.../commits?per_page=1` + the `Link: last` pagination header. Q3 and Q4 also require extra content checks for test and CI files.
-
-Producer ↔ consumer contract:
-
-- Messages on `repos.raw` are raw crawler JSON objects, byte-for-byte the same as the NDJSON output, no envelope.
-- Pulsar partition key is `str(repo_id)`.
-- Delivery is at-least-once; consumers use `repo_id`.
-
-## Experiments
-
-During development, the experiment automation and measurement scripts were implemented and tested on a separate `experiments` branch. The final runnable version is integrated into `main`, so reproduction should be done from the `main` branch.
-
-
-## Report
-
-Max 4 pages AND 3000 words. Sections: Introduction, Related work, System architecture, Results. Results needs a graph per Q1–Q4, an adaptability discussion (top-10 vs top-20), interesting findings, and the scalability story.
-
-Crawler-side things worth mentioning in the architecture / results sections:
-
-- Day-sliced GitHub search with adaptive UTC time-range subdivision when a day exceeds the 1000-result API cap. We verified this works against real GitHub: a one-day `pushed:` query at `stars:>=100` returns ~17k records and the splitter recursively narrows it to 24 leaf ranges, all under 1000.
-- Token-pool rate-limit handling with rotation + bounded sleep + total-wait budget.
-- Cache-backed NDJSON storage; reruns hit the cache and don't burn API calls.
-- Dedup by stable `repo_id` at the crawler/cache boundary.
-- Live producer uses async `send_async` + `flush()`, bounded retry, optional checkpoint. At-least-once delivery, consumer-idempotent on `repo_id`.
-
-## Testing
-
-```bash
-export PYTHONPATH=src
-python3 -m unittest discover -s tests
-```
-
-52 tests right now. Crawler covers date slicing, dedup, adaptive range splitting, streaming cache writes, rate-limit retry/budget, and local `.env` loading. Producer covers async send, transient retry recovery, permanent failure handling, in-flight bound, checkpoint skip + persist, ack-gated NDJSON mirror.
-
-Still TODO when the rest of the stack lands: integration tests for the producer→broker→consumer flow, smoke tests against the Docker Swarm deployment, experiment reproducibility checks.
-
-## Definition of done
-
-We're done when:
-
-- Docker containers + scripts bring the whole system up reproducibly on the SSC VMs.
-- The crawler collects last-year GitHub metadata with pagination, rate-limit handling, cache reuse, and dedup.
-- Metadata flows through Pulsar via documented producer + consumers + topics.
-- Q1–Q4 produce quantified answers and graphs.
-- Scalability experiments back up the report claims.
-- The 4 page report is written.
-- The demo explains architecture, results, experiments, and individual contributions.
+[MIT](LICENSE)
