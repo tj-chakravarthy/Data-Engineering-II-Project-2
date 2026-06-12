@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -12,6 +13,8 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
+log = logging.getLogger(__name__)
 
 RESULT_SPECS = {
     "q1_languages": {
@@ -38,6 +41,7 @@ RESULT_SPECS = {
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     results_dir = Path(os.getenv("RESULTS_DIR", "data/results"))
     figures_dir = Path(os.getenv("FIGURES_DIR", "data/figures"))
     plot_result_files(results_dir, figures_dir)
@@ -50,7 +54,7 @@ def plot_result_files(results_dir: Path, figures_dir: Path) -> list[Path]:
     for spec in RESULT_SPECS.values():
         path = results_dir / f"{spec['filename']}.json"
         if not path.exists():
-            print(f"Skipping missing {path}")
+            log.info("Skipping missing %s", path)
             continue
         data = json.loads(path.read_text(encoding="utf-8"))
         output_path = figures_dir / f"{spec['filename']}.png"
@@ -86,7 +90,7 @@ def _plot_bar(data: list[dict], title: str, output_path: Path) -> None:
     plt.tight_layout()
     plt.savefig(output_path, dpi=200)
     plt.close()
-    print(f"Wrote {output_path}")
+    log.info("Wrote %s", output_path)
 
 
 if __name__ == "__main__":
